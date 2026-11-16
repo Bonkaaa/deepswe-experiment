@@ -7,3 +7,6 @@ __pycache__/
 runs/
 .uv-cache/
 .test-temp/
+
+# Local Ollama runtime and model files
+.local/
