@@ -1,0 +1,27 @@
+study_id: "pilot-a"
+data_root: "data"
+output_root: "runs"
+tasks:
+  - "adaptix-name-mapping-aliases"
+branches:
+  - "100"
+  - "50-random"
+  - "0"
+sample_seed: 42
+budget:
+  max_model_requests: 25
+  wall_time_seconds: 1800
+  max_output_tokens: 4096
+  max_tool_output_chars: 8000
+  tool_timeout_seconds: 120
+quota:
+  rpm: 15
+  tpm: 250000
+  rpd: 500
+quota_project: "Project-A"
+task_options:
+  adaptix-name-mapping-aliases:
+    role: smoke_test
+    scope_part: morphing
+    product_paths:
+      - src/adaptix/
