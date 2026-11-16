@@ -1,0 +1,40 @@
+from __future__ import annotations
+import shutil
+import subprocess
+from pathlib import Path
+from ..results.storage import scratch_directory
+
+EXCLUDED={'.git','__pycache__','.pytest_cache'}
+def copy_snapshot(source,dest):
+    source=Path(source); dest=Path(dest); dest.mkdir(parents=True,exist_ok=True)
+    for p in source.rglob('*'):
+        rel=p.relative_to(source)
+        if any(x in EXCLUDED for x in rel.parts): continue
+        if p.is_symlink(): raise ValueError('Symlink snapshot rejected')
+        if p.is_file():
+            target=dest/rel; target.parent.mkdir(parents=True,exist_ok=True); shutil.copy2(p,target)
+
+def collect_diff(baseline,final,output_dir,allowed_prefixes):
+    output_dir=Path(output_dir).resolve(); output_dir.mkdir(parents=True,exist_ok=True)
+    baseline=Path(baseline).resolve(); final=Path(final).resolve()
+    # Put temporary Git objects under the selected run artifact, avoiding writes
+    # to an unrelated host temp directory and keeping scratch data scoped.
+    with scratch_directory(output_dir) as tmp:
+        tmp=tmp.resolve()
+        repo=tmp/'worktree'; repo.mkdir()
+        gitdir=tmp/'gitdata'
+        subprocess.run(['git','-c','core.longpaths=true','init','--bare','-q',str(gitdir)],cwd=tmp,check=True,capture_output=True)
+        def git(*args):
+            return subprocess.run(['git','-c','core.longpaths=true','--git-dir',str(gitdir),'--work-tree',str(repo),
+                                   '-c','core.autocrlf=false',*args],cwd=repo,check=True,capture_output=True).stdout
+        copy_snapshot(baseline,repo); git('add','-f','.')
+        git('-c','user.name=Harness','-c','user.email=harness@local','commit','-qm','baseline','--allow-empty')
+        for p in list(repo.iterdir()):
+            if p.is_dir(): shutil.rmtree(p)
+            else: p.unlink()
+        copy_snapshot(final,repo); git('add','-f','-A')
+        full=git('diff','--cached','--binary','--no-renames','HEAD')
+        product=git('diff','--cached','--binary','--no-renames','HEAD','--',*allowed_prefixes)
+    a=output_dir/'full_worktree.diff'; b=output_dir/'agent_patch.diff'
+    a.write_bytes(full); b.write_bytes(product)
+    return a,b
