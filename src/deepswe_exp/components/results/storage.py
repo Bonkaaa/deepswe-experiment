@@ -4,6 +4,7 @@ import json
 import os
 import shutil
 import stat
+import time
 import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -14,10 +15,23 @@ def digest(value):
 def read_json(path): return json.loads(Path(path).read_text(encoding='utf-8'))
 def write_json(path,value):
     path=Path(path); path.parent.mkdir(parents=True,exist_ok=True)
-    tmp=path.with_suffix(path.suffix+'.tmp')
+    tmp=path.with_suffix(path.suffix+f'.tmp.{uuid.uuid4().hex[:8]}')
     with tmp.open('w',encoding='utf-8',newline='\n') as f:
         json.dump(value,f,ensure_ascii=False,indent=2); f.flush(); os.fsync(f.fileno())
-    tmp.replace(path)
+    for attempt in range(5):
+        try:
+            tmp.replace(path)
+            return
+        except PermissionError:
+            if attempt == 4:
+                try:
+                    path.unlink(missing_ok=True)
+                    tmp.replace(path)
+                except Exception:
+                    path.write_text(tmp.read_text(encoding='utf-8'), encoding='utf-8', newline='\n')
+                    tmp.unlink(missing_ok=True)
+                return
+            time.sleep(0.02 * (attempt + 1))
 def append_event(path,event):
     path=Path(path); path.parent.mkdir(parents=True,exist_ok=True)
     with path.open('a',encoding='utf-8') as f:
