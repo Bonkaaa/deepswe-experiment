@@ -17,6 +17,20 @@ def load_system_prompt(path):
     return text
 
 def build_model(settings):
+    if getattr(settings, "model_provider", "google") == "ollama":
+        from langchain_ollama import ChatOllama
+        return ChatOllama(
+            model=settings.model,
+            base_url=settings.ollama_base_url,
+            num_ctx=settings.ollama_num_ctx,
+            num_predict=settings.budget["max_output_tokens"],
+            temperature=float(getattr(settings, "ollama_options", {}).get("temperature", 0.0)),
+        ).bind_tools([{
+            'name': 'run_shell',
+            'description': 'Run a shell command inside the assigned Linux repository at /app.',
+            'parameters': {'type': 'object', 'properties': {'command': {'type': 'string'}}, 'required': ['command']}
+        }])
+
     # Both per-request and client-level Google SDK retry budgets are disabled.
     return ChatGoogleGenerativeAI(model=settings.model,api_key=settings.api_key,vertexai=False,
         max_output_tokens=settings.budget['max_output_tokens'],
@@ -44,17 +58,23 @@ async def run_agent(*,settings,instruction,box,output_dir,ledger,protocol_hash='
             estimate=math.ceil(len(serialized.encode('utf-8'))/3*1.25)+512
             ledger.reserve(estimate,deadline,clock)
             calls+=1; save()
+            invoke_kwargs = {}
+            if getattr(settings, "model_provider", "google") == "google":
+                invoke_kwargs = {"max_retries": 0, "timeout": max(.01, deadline - clock())}
             try:
-                response=await asyncio.wait_for(model.ainvoke(messages,max_retries=0,
-                    timeout=max(.01,deadline-clock())),timeout=max(.01,deadline-clock()))
+                response = await asyncio.wait_for(
+                    model.ainvoke(messages, **invoke_kwargs),
+                    timeout=max(.01, deadline - clock()),
+                )
             except asyncio.TimeoutError:
                 stop='time_budget'; break
             except Exception as exc:
                 stop='provider_error'
                 append_event(output_dir/'errors.jsonl',{'type':type(exc).__name__,'message':settings.redact(str(exc))})
                 break
-            messages.append(response); usage.append(response.usage_metadata)
-            ledger.usage(response.usage_metadata); save()
+            meta = getattr(response, "usage_metadata", None) or {}
+            messages.append(response); usage.append(meta)
+            ledger.usage(meta); save()
             if not response.tool_calls:
                 stop='model_finished' if not response.invalid_tool_calls else 'format_error'; break
             for call in response.tool_calls:

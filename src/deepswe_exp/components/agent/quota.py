@@ -3,12 +3,43 @@ import json
 import math
 import time
 from contextlib import contextmanager
-from datetime import datetime,timezone
+from datetime import datetime, timezone
+from pathlib import Path
 from zoneinfo import ZoneInfo
 from ..results.storage import append_event
 
 class QuotaUnavailable(RuntimeError): pass
 class InputBudget(RuntimeError): pass
+
+
+class LocalLedger:
+    """Event recorder for local models without cloud rate limits."""
+    def __init__(self, path, model, project="local", clock=time.time):
+        self.path = Path(path)
+        self.model = model
+        self.project = project
+        self.clock = clock
+
+    def remaining(self) -> int:
+        return 999_999
+
+    def reserve(self, estimate: int, deadline: float, monotonic=time.monotonic):
+        append_event(self.path, {
+            'type': 'request',
+            'time': self.clock(),
+            'model': self.model,
+            'project': self.project,
+            'tokens': estimate,
+        })
+
+    def usage(self, usage: dict | None):
+        append_event(self.path, {
+            'type': 'usage',
+            'time': self.clock(),
+            'model': self.model,
+            'project': self.project,
+            'usage': usage or {},
+        })
 
 class QuotaLedger:
     def __init__(self,path,quota,model,project='default',clock=time.time,sleep=time.sleep):

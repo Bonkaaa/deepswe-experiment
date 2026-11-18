@@ -1,0 +1,13 @@
+profile_id: neptune
+provider: ollama
+study_config: config/study.neptune.yaml
+model: qwen3.8:27b
+ollama:
+  base_url: http://127.0.0.1:11435
+  binary: .local/ollama-neptune/runtime/bin/ollama
+  models_dir: .local/ollama-neptune/models
+  state_dir: .local/ollama-neptune
+  num_ctx: 32768
+  temperature: 0.0
+  num_parallel: 1
+  max_loaded_models: 1
