@@ -13,11 +13,13 @@ from .components.tasks.tasks import load_task
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="deepswe-exp")
     parser.add_argument("--config", default=None, help="Study YAML (defaults to this repository's config/study.yaml)")
+    parser.add_argument("--profile", default=None, help="Server profile (e.g. saturn, neptune)")
     commands = parser.add_subparsers(dest="command", required=True)
-    for name in ("doctor", "check-model", "prepare", "validate", "plan-runs", "run-next", "evaluate", "summarize"):
+    for name in ("doctor", "check-model", "prepare", "validate", "plan-runs", "run-next", "run-all", "evaluate", "summarize"):
         sub = commands.add_parser(name)
         sub.add_argument("--config", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
-        if name in ("prepare", "validate", "plan-runs", "run-next", "evaluate"):
+        sub.add_argument("--profile", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
+        if name in ("prepare", "validate", "plan-runs", "run-next", "run-all", "evaluate"):
             sub.add_argument("--task", help="Limit this command to one configured task")
         if name in ("run-next", "evaluate"):
             sub.add_argument("--run-id", help="Select an already planned run")
@@ -35,11 +37,26 @@ def _doctor(settings) -> int:
     checks = []
     py = platform.python_version()
     checks.append(_print_check("Python", sys.version_info[:2] == (3, 12), f"{py} (required 3.12.x)"))
-    checks.append(_print_check("MODEL", bool(settings.model), settings.model or "not set in .env/environment"))
-    checks.append(_print_check("Gemini API key", bool(settings.api_key), "configured" if settings.api_key else "not set in .env/environment"))
-    checks.append(_print_check("Quota", settings.quota_ready,
-                               "project and RPM/TPM/RPD configured" if settings.quota_ready
-                               else "fill quota_project and quota.rpm/tpm/rpd from AI Studio"))
+    if getattr(settings, "profile_id", None):
+        checks.append(_print_check("Profile", True, settings.profile_id))
+    provider = getattr(settings, "model_provider", "google")
+    checks.append(_print_check("Provider", provider in ("google", "ollama"), provider))
+    checks.append(_print_check("MODEL", bool(settings.model), settings.model or "not set in configuration"))
+
+    if provider == "google":
+        checks.append(_print_check("Gemini API key", bool(settings.api_key), "configured" if settings.api_key else "not set in .env/environment"))
+        checks.append(_print_check("Quota", settings.quota_ready,
+                                   "project and RPM/TPM/RPD configured" if settings.quota_ready
+                                   else "fill quota_project and quota.rpm/tpm/rpd from AI Studio"))
+    elif provider == "ollama":
+        checks.append(_print_check("Ollama Base URL", bool(settings.ollama_base_url), settings.ollama_base_url))
+        checks.append(_print_check("Ollama Context", bool(settings.ollama_num_ctx), str(settings.ollama_num_ctx)))
+        from .components.results.storage import fetch_ollama_metadata
+        meta = fetch_ollama_metadata(settings.ollama_base_url, settings.model, timeout=1.5)
+        ollama_ok = bool(meta.get("version"))
+        detail = f"version {meta['version']}" if ollama_ok else "server not responding"
+        checks.append(_print_check("Ollama Server Endpoint", ollama_ok, detail))
+
     checks.append(_print_check("System prompt", settings.prompt_path.is_file() and bool(settings.prompt_path.read_text(encoding="utf-8").strip()), str(settings.prompt_path)))
     for task_id in settings.task_ids:
         try:
@@ -67,7 +84,9 @@ def _select_tasks(settings, task_id: str | None) -> list[str]:
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     try:
-        settings = load_settings(args.config)
+        config_arg = getattr(args, "config", None)
+        profile_arg = getattr(args, "profile", None)
+        settings = load_settings(config_path=config_arg, profile=profile_arg)
         if args.command == "doctor":
             return _doctor(settings)
         if args.command == "check-model":
@@ -123,6 +142,19 @@ def main(argv: list[str] | None = None) -> int:
                         backend.client.close()
                 print(result)
                 return 0 if result.get("status") not in ("interrupted", "evaluation_error") else 2
+            if args.command == "run-all":
+                from .components.execution.runner import run_all
+                from .components.execution.docker_env import DockerBackend
+                backend = DockerBackend()
+                try:
+                    result = run_all(settings, backend, selected[0] if getattr(args, "task", None) else None)
+                finally:
+                    backend.client.close()
+                print(f"Batch execution result: {result.get('status')} (completed: {result.get('completed', 0)})")
+                if result.get("status") != "completed":
+                    print(f"Failed run details: {result}", file=sys.stderr)
+                    return 2
+                return 0
             if args.command == "evaluate":
                 from .components.execution.runner import evaluate_pending
                 from .components.execution.docker_env import DockerBackend

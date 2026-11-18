@@ -50,9 +50,60 @@ def study_lock(root):
     finally: path.unlink(missing_ok=True)
 def run_dir(settings,run):
     return settings.output_root/run['task_id']/run['branch']/str(run['seed'])/run['attempt_id']
-def protocol(settings,prepared,task_ids=None):
-    selected=list(task_ids or prepared)
-    validations={task:read_json(settings.output_root/task/'validation/validation.json') for task in selected}
-    return digest({'schema_version':1,'config':settings.config,'model':settings.model,
-                   'prompt':settings.prompt_path.read_text(encoding='utf-8'),
-                   'prepared':{task:prepared[task] for task in selected},'validation':validations})
+def fetch_ollama_metadata(base_url: str, model_tag: str, timeout: float = 2.0) -> dict:
+    import urllib.request
+    meta = {"version": None, "digest": None, "quantization": None, "details": {}}
+    base = base_url.rstrip("/")
+    try:
+        req = urllib.request.Request(f"{base}/api/version", headers={"User-Agent": "deepswe"})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            meta["version"] = json.loads(resp.read().decode("utf-8")).get("version")
+    except Exception:
+        pass
+    try:
+        data = json.dumps({"name": model_tag}).encode("utf-8")
+        req = urllib.request.Request(f"{base}/api/show", data=data, headers={"Content-Type": "application/json", "User-Agent": "deepswe"})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            show = json.loads(resp.read().decode("utf-8"))
+            meta["details"] = show.get("details", {})
+            meta["quantization"] = meta["details"].get("quantization_level")
+            meta["model_info"] = show.get("model_info", {})
+    except Exception:
+        pass
+    try:
+        req = urllib.request.Request(f"{base}/api/tags", headers={"User-Agent": "deepswe"})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            tags = json.loads(resp.read().decode("utf-8")).get("models", [])
+            for m in tags:
+                if m.get("name") == model_tag or m.get("model") == model_tag:
+                    meta["digest"] = m.get("digest")
+                    if not meta["quantization"]:
+                        meta["quantization"] = m.get("details", {}).get("quantization_level")
+                    break
+    except Exception:
+        pass
+    return meta
+
+
+def protocol(settings, prepared, task_ids=None, model_metadata=None):
+    selected = list(task_ids or prepared)
+    validations = {task: read_json(settings.output_root / task / 'validation/validation.json') for task in selected}
+    payload = {
+        'schema_version': 1,
+        'config': settings.config,
+        'model': settings.model,
+        'prompt': settings.prompt_path.read_text(encoding='utf-8'),
+        'prepared': {task: prepared[task] for task in selected},
+        'validation': validations,
+    }
+    if getattr(settings, "profile_id", None) is not None or getattr(settings, "model_provider", "google") != "google":
+        payload['model_provider'] = getattr(settings, "model_provider", "google")
+        payload['profile_id'] = getattr(settings, "profile_id", None)
+    if getattr(settings, "model_provider", "google") == "ollama":
+        payload["ollama"] = {
+            "base_url": settings.ollama_base_url,
+            "num_ctx": settings.ollama_num_ctx,
+            "options": getattr(settings, "ollama_options", {}),
+            "metadata": model_metadata or {},
+        }
+    return digest(payload)

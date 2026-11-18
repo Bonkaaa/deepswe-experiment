@@ -5,7 +5,7 @@ import random
 import uuid
 
 from ..agent.agent import run_agent
-from ..agent.quota import QuotaLedger
+from ..agent.quota import QuotaLedger, LocalLedger
 from ..evaluation.patches import collect_diff
 from ..evaluation.verifier import evaluate_patch, evaluate_supplied_tests
 from ..results.storage import protocol, read_json, run_dir, utc_now, write_json
@@ -25,7 +25,20 @@ def plan_runs(settings, task_ids=None):
         validation = read_json(settings.output_root / task / "validation/validation.json")
         if not validation.get("valid"):
             raise ValueError(f"Task not validated: {task}")
-    protocol_hash = protocol(settings, prepared, selected)
+    model_metadata = None
+    if getattr(settings, "model_provider", "google") == "ollama":
+        from ..results.storage import fetch_ollama_metadata
+        model_metadata = fetch_ollama_metadata(settings.ollama_base_url, settings.model)
+        write_json(settings.output_root / "protocol_snapshot.json", {
+            "study_id": settings.config["study_id"],
+            "profile_id": getattr(settings, "profile_id", None),
+            "model": settings.model,
+            "ollama_base_url": settings.ollama_base_url,
+            "ollama_num_ctx": settings.ollama_num_ctx,
+            "metadata": model_metadata,
+            "frozen_at": utc_now(),
+        })
+    protocol_hash = protocol(settings, prepared, selected, model_metadata=model_metadata)
     path = settings.output_root / "schedule.json"
     if path.exists():
         old = read_json(path)
@@ -53,6 +66,7 @@ def plan_runs(settings, task_ids=None):
     result = {
         "schema_version": 1,
         "protocol_hash": protocol_hash,
+        "model_metadata": model_metadata,
         "task_ids": selected,
         "runs": rows,
         "max_requests": len(rows) * settings.budget["max_model_requests"],
@@ -65,8 +79,15 @@ def schedule(settings):
     value = read_json(settings.output_root / "schedule.json")
     selected=value.get("task_ids",settings.task_ids)
     prepared = {task: read_json(settings.output_root / task / "prepared.json") for task in selected}
-    if value.get("protocol_hash") != protocol(settings, prepared, selected):
+    model_metadata = value.get("model_metadata")
+    if value.get("protocol_hash") != protocol(settings, prepared, selected, model_metadata=model_metadata):
         raise ValueError("Frozen protocol changed")
+
+    if getattr(settings, "model_provider", "google") == "ollama" and model_metadata and model_metadata.get("digest"):
+        from ..results.storage import fetch_ollama_metadata
+        current_meta = fetch_ollama_metadata(settings.ollama_base_url, settings.model, timeout=1.5)
+        if current_meta.get("digest") and current_meta["digest"] != model_metadata["digest"]:
+            raise ValueError(f"Model digest changed from {model_metadata['digest']} to {current_meta['digest']}; use a new study_id")
     return value
 
 
@@ -119,17 +140,28 @@ def run_next(settings, backend=None, task_id=None, run_id=None, restart=False):
                and (run_id is None or run["run_id"] == run_id)]
     if not pending:
         return {"status": "no_pending_runs"}
-    if not settings.model or not settings.api_key or not settings.quota_ready:
-        raise ValueError("MODEL, GEMINI_API_KEY and quota RPM/TPM/RPD are required")
-    run = pending[0]
-    ledger = QuotaLedger(
-        settings.output_root.parent / "quota.jsonl",
-        settings.config["quota"],
-        settings.model,
-        settings.config.get("quota_project", "default"),
-    )
-    if ledger.remaining() < settings.budget["max_model_requests"]:
-        return {"status": "waiting_for_daily_quota"}
+    provider = getattr(settings, "model_provider", "google")
+    if provider == "google":
+        if not settings.model or not settings.api_key or not settings.quota_ready:
+            raise ValueError("MODEL, GEMINI_API_KEY and quota RPM/TPM/RPD are required")
+        run = pending[0]
+        ledger = QuotaLedger(
+            settings.output_root.parent / "quota.jsonl",
+            settings.config["quota"],
+            settings.model,
+            settings.config.get("quota_project", "default"),
+        )
+        if ledger.remaining() < settings.budget["max_model_requests"]:
+            return {"status": "waiting_for_daily_quota"}
+    else:
+        if not settings.model:
+            raise ValueError("MODEL is required for Ollama provider")
+        run = pending[0]
+        ledger = LocalLedger(
+            settings.output_root.parent / "quota.jsonl",
+            settings.model,
+            settings.profile_id or "ollama",
+        )
     if backend is None:
         raise ValueError("Docker backend is required to execute a repair run")
 
@@ -169,7 +201,9 @@ def run_next(settings, backend=None, task_id=None, run_id=None, restart=False):
         collect_diff(variant / "snapshot", out / "final", out, manifest["product_paths"])
         write_json(out / "agent_result.json", agent_result)
 
-        if agent_result["stop_reason"] in ("provider_error", "quota_interrupted", "docker_error", "internal_error"):
+        if agent_result["stop_reason"] in (
+            "provider_error", "quota_interrupted", "docker_error", "internal_error", "format_error"
+        ):
             run["status"] = "interrupted"
         else:
             visible = evaluate_supplied_tests(
@@ -230,3 +264,54 @@ def evaluate_pending(settings, backend, run_id=None, task_id=None):
         run["status"] = "scored" if result["status"] in ("pass", "fail_test", "apply_failure") else "evaluation_error"
         write_json(settings.output_root / "schedule.json", value)
     return {"evaluated": len(rows)}
+
+
+def run_all(settings, backend=None, task_id=None):
+    completed = 0
+    while True:
+        res = run_next(settings, backend=backend, task_id=task_id)
+        status = res.get("status")
+        if status == "no_pending_runs":
+            break
+        if status == "waiting_for_daily_quota":
+            return {"status": "waiting_for_daily_quota", "completed": completed, "detail": "Daily quota exhausted"}
+        if status in ("interrupted", "evaluation_error"):
+            return {
+                "status": status,
+                "completed": completed,
+                "failed_run_id": res.get("run_id"),
+                "task_id": res.get("task_id"),
+                "branch": res.get("branch"),
+                "seed": res.get("seed"),
+                "attempt_id": res.get("attempt_id"),
+            }
+        completed += 1
+        print(f"[Progress] Completed run {completed}: task={res.get('task_id')} branch={res.get('branch')} seed={res.get('seed')} attempt={res.get('attempt_id')} status={status}")
+
+    sched = schedule(settings)
+    from collections import defaultdict
+    grouped = defaultdict(list)
+    for r in sched["runs"]:
+        grouped[(r["task_id"], r["seed"], r["attempt_id"])].append(r)
+
+    expected_branches = set(settings.config["branches"])
+    task_seed_pairs = set((r["task_id"], r["seed"]) for r in sched["runs"] if task_id is None or r["task_id"] == task_id)
+    incomplete_groups = []
+    for pair in sorted(task_seed_pairs):
+        has_completed_attempt = any(
+            set(r["branch"] for r in runs) == expected_branches and all(r["status"] == "scored" for r in runs)
+            for (t, s, a), runs in grouped.items() if (t, s) == pair
+        )
+        if not has_completed_attempt:
+            incomplete_groups.append(f"{pair[0]}:seed_{pair[1]}")
+
+    if incomplete_groups:
+        return {
+            "status": "incomplete",
+            "completed": completed,
+            "incomplete_groups": incomplete_groups,
+            "detail": f"Incomplete task/seed groups: {incomplete_groups}. Run restart-group or evaluate to resolve.",
+        }
+
+    return {"status": "completed", "completed": completed}
+
