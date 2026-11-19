@@ -10,7 +10,7 @@ from ..results.storage import write_json,append_event
 from ..execution.docker_env import DockerFailure
 from ..results.schemas import AgentResult
 from .quota import InputBudget,QuotaUnavailable
-from .context import build_request_context, truncate_output
+from .context import build_request_context, classify_response, truncate_output
 
 def load_system_prompt(path):
     text=Path(path).read_text(encoding='utf-8').strip()
@@ -44,7 +44,10 @@ async def run_agent(*,settings,instruction,box,output_dir,ledger,protocol_hash='
     budget=settings.budget; started=clock(); deadline=started+budget['wall_time_seconds']
     messages=[SystemMessage(content=load_system_prompt(settings.prompt_path)),HumanMessage(content=instruction)]
     calls=0; stop='internal_error'; usage=[]; commands=[]; context_stats={}
-    emergency_retry_done=False
+    truncation_retries=0
+    emergency_context_retry_done=False
+    force_emergency_compact=False
+    recovery_feedback=None
     def save():
         data={'schema_version':1,'protocol_hash':protocol_hash,'stop_reason':stop,'model_requests':calls,'elapsed_seconds':clock()-started,
               'usage':usage,'messages':messages_to_dict(messages),'commands':commands,'context_stats':context_stats}
@@ -56,12 +59,19 @@ async def run_agent(*,settings,instruction,box,output_dir,ledger,protocol_hash='
             save()
             if calls>=budget['max_model_requests']: stop='request_budget'; break
             if clock()>=deadline: stop='time_budget'; break
+
+            if recovery_feedback:
+                messages.append(HumanMessage(content=recovery_feedback))
+                recovery_feedback = None
+
             input_budget = getattr(settings, "input_budget", 1_000_000)
             request_messages, ctx_stats = build_request_context(
                 messages,
                 input_budget=input_budget,
-                min_recent_turns=3,
+                force_compact=force_emergency_compact,
+                min_recent_turns=2 if force_emergency_compact else 3,
             )
+            force_emergency_compact = False
             context_stats = ctx_stats
             serialized=json.dumps(messages_to_dict(request_messages),ensure_ascii=False)
             estimate=math.ceil(len(serialized.encode('utf-8'))/3*1.25)+512
@@ -82,56 +92,69 @@ async def run_agent(*,settings,instruction,box,output_dir,ledger,protocol_hash='
                 append_event(output_dir/'errors.jsonl',{'type':type(exc).__name__,'message':settings.redact(str(exc))})
                 break
 
-            resp_meta = getattr(response, "response_metadata", {}) or {}
-            is_length_overflow = (
-                resp_meta.get("done_reason") == "length"
-                or resp_meta.get("finish_reason") == "length"
-            )
-            if is_length_overflow and not response.tool_calls and not emergency_retry_done:
-                emergency_retry_done = True
-                request_messages, ctx_stats = build_request_context(
-                    messages,
-                    input_budget=input_budget,
-                    force_compact=True,
-                    min_recent_turns=2,
-                )
-                context_stats = ctx_stats
-                calls += 1; save()
-                try:
-                    response = await asyncio.wait_for(
-                        model.ainvoke(request_messages, **invoke_kwargs),
-                        timeout=max(.01, deadline - clock()),
-                    )
-                except asyncio.TimeoutError:
-                    stop = 'time_budget'; break
-                except Exception as exc:
-                    stop = 'provider_error'
-                    append_event(output_dir / 'errors.jsonl', {'type': type(exc).__name__, 'message': settings.redact(str(exc))})
-                    break
-                resp_meta = getattr(response, "response_metadata", {}) or {}
-                is_length_overflow = (
-                    resp_meta.get("done_reason") == "length"
-                    or resp_meta.get("finish_reason") == "length"
-                )
-
             meta = getattr(response, "usage_metadata", None) or {}
             messages.append(response); usage.append(meta)
             ledger.usage(meta); save()
 
-            if is_length_overflow and not response.tool_calls:
+            classification = classify_response(
+                response,
+                num_ctx=getattr(settings, "ollama_num_ctx", 65536),
+                max_output_tokens=budget["max_output_tokens"],
+                input_budget=input_budget,
+            )
+            kind = classification["kind"]
+
+            if kind == "output_truncated":
+                if not response.tool_calls or getattr(response, "invalid_tool_calls", None):
+                    if truncation_retries < 1:
+                        truncation_retries += 1
+                        append_event(output_dir / 'errors.jsonl', {
+                            'type': 'OutputTruncated',
+                            'message': f'Single-turn output limit hit ({budget["max_output_tokens"]} tokens). Attempting 1-shot recovery retry.',
+                        })
+                        recovery_feedback = (
+                            f"Warning: Your previous response exceeded the single-turn output token limit "
+                            f"({budget['max_output_tokens']} tokens) and was truncated before completing the command. "
+                            "Do NOT attempt to rewrite or dump entire large files with 'cat << EOF'. "
+                            "Please make targeted, smaller edits (e.g. using 'sed -i', 'python3 -c \"...\"', or a focused patch) "
+                            "to modify only the necessary lines."
+                        )
+                        continue
+                    stop = 'output_truncated'
+                    append_event(output_dir / 'errors.jsonl', {
+                        'type': 'OutputTruncated',
+                        'message': f'Output token limit ({budget["max_output_tokens"]} tokens) exceeded repeatedly; aborting run.',
+                    })
+                    break
+
+            if kind == "context_overflow":
+                if not emergency_context_retry_done:
+                    emergency_context_retry_done = True
+                    force_emergency_compact = True
+                    append_event(output_dir / 'errors.jsonl', {
+                        'type': 'ContextOverflow',
+                        'message': 'Context window capacity reached; attempting emergency compact retry.',
+                    })
+                    messages.pop()
+                    continue
                 stop = 'context_overflow'
                 append_event(output_dir / 'errors.jsonl', {
                     'type': 'ContextOverflow',
-                    'message': f'Model output truncated due to context window limit ({input_budget} tokens)'
+                    'message': f'Model input exceeded context window limit ({input_budget} tokens).',
                 })
                 break
-            if is_length_overflow and response.invalid_tool_calls:
-                stop = 'context_overflow'
-                append_event(output_dir / 'errors.jsonl', {
-                    'type': 'ContextOverflow',
-                    'message': 'Tool call was truncated mid-JSON by context window limit'
-                })
-                break
+
+            if kind == "truncation_unknown":
+                if not response.tool_calls:
+                    stop = 'truncation_unknown'
+                    append_event(output_dir / 'errors.jsonl', {
+                        'type': 'TruncationUnknown',
+                        'message': 'Response truncated with length flag but inconclusive counters.',
+                    })
+                    break
+
+            # Turn made valid progress or finished normally
+            truncation_retries = 0
 
             if not response.tool_calls:
                 stop='model_finished' if not response.invalid_tool_calls else 'format_error'; break

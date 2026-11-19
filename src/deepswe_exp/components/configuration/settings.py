@@ -19,7 +19,7 @@ BUDGET_KEYS = (
 MAX_BUDGET = {
     "max_model_requests": 200,
     "wall_time_seconds": 7200,
-    "max_output_tokens": 4096,
+    "max_output_tokens": 8192,
     "max_tool_output_chars": 8000,
     "tool_timeout_seconds": 120,
 }
@@ -191,6 +191,7 @@ def _validate_profile(config: object) -> dict:
 def load_settings(
     config_path: str | Path | None = None,
     profile: str | None = None,
+    study_id: str | None = None,
 ) -> Settings:
     root = find_root(Path(config_path).expanduser().resolve().parent if config_path else None)
     env = dotenv_values(root / ".env")
@@ -246,6 +247,9 @@ def load_settings(
             study_path = Path(config_path).expanduser().resolve()
 
         study_config = _validate_config(yaml.safe_load(study_path.read_text(encoding="utf-8")))
+        if study_id:
+            study_config = {**study_config, "study_id": str(study_id).strip()}
+            _validate_config(study_config)
         provider = prof_config["provider"]
         model = prof_config["model"]
         key = os.environ.get("GEMINI_API_KEY", env.get("GEMINI_API_KEY") or "").strip() if provider == "google" else ""
@@ -273,6 +277,9 @@ def load_settings(
     else:
         path = Path(config_path).expanduser().resolve()
     config = _validate_config(yaml.safe_load(path.read_text(encoding="utf-8")))
+    if study_id:
+        config = {**config, "study_id": str(study_id).strip()}
+        _validate_config(config)
     model = os.environ.get("MODEL", env.get("MODEL") or "").strip()
     key = os.environ.get("GEMINI_API_KEY", env.get("GEMINI_API_KEY") or "").strip()
     provider = os.environ.get("MODEL_PROVIDER", env.get("MODEL_PROVIDER") or "google").strip()

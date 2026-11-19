@@ -190,14 +190,14 @@ class TruncatedFakeModel:
     async def ainvoke(self, messages, **kwargs):
         self.calls += 1
         if not self.recover_on_retry:
-            # Always cut off due to length, no tool calls
+            # Always cut off due to context window length
             msg = AIMessage(content="Truncated...", tool_calls=[])
-            msg.response_metadata = {"done_reason": "length", "done": True}
+            msg.response_metadata = {"done_reason": "length", "prompt_eval_count": 65500, "eval_count": 10, "done": True}
             return msg
         if self.calls == 1:
-            # First attempt cut off
+            # First attempt cut off by context limit
             msg = AIMessage(content="Truncated...", tool_calls=[])
-            msg.response_metadata = {"done_reason": "length", "done": True}
+            msg.response_metadata = {"done_reason": "length", "prompt_eval_count": 65500, "eval_count": 10, "done": True}
             return msg
         if self.calls == 2:
             # Recovered on emergency retry: returns a tool call
@@ -210,14 +210,88 @@ class TruncatedFakeModel:
         return AIMessage(content="Done", response_metadata={"done_reason": "stop"})
 
 
+class OutputTruncatedFakeModel:
+    """Simulates an Ollama response where output tokens hit max_output_tokens."""
+    def __init__(self, recover=True):
+        self.calls = 0
+        self.recover = recover
+
+    async def ainvoke(self, messages, **kwargs):
+        self.calls += 1
+        if self.calls == 1:
+            # First attempt hits max_output_tokens (8192)
+            msg = AIMessage(content="", tool_calls=[])
+            msg.response_metadata = {
+                "done_reason": "length",
+                "eval_count": 8192,
+                "prompt_eval_count": 28000,
+                "done": True,
+            }
+            return msg
+        if self.calls == 2 and self.recover:
+            # Model sees warning in history and makes small targeted tool call
+            msg = AIMessage(content="", tool_calls=[{
+                "name": "run_shell", "args": {"command": "sed -i 's/foo/bar/' file.py"},
+                "id": "tool-rec-sed", "type": "tool_call",
+            }])
+            msg.response_metadata = {"done_reason": "stop", "eval_count": 50, "prompt_eval_count": 28100, "done": True}
+            return msg
+        if not self.recover:
+            # Second attempt also truncated
+            msg = AIMessage(content="", tool_calls=[])
+            msg.response_metadata = {
+                "done_reason": "length",
+                "eval_count": 8192,
+                "prompt_eval_count": 28100,
+                "done": True,
+            }
+            return msg
+        return AIMessage(content="Done", response_metadata={"done_reason": "stop"})
+
+
 class TestAgentContextIntegration(unittest.TestCase):
     def test_settings_input_budget_calculation(self):
         from deepswe_exp.components.configuration.settings import load_settings
         settings = load_settings(profile="saturn")
         self.assertEqual(settings.ollama_num_ctx, 65536)
         self.assertEqual(settings.ollama_context_safety_tokens, 4096)
-        # input_budget = 65536 - 4096 (max_output) - 4096 (safety) = 57344
-        self.assertEqual(settings.input_budget, 57344)
+        # input_budget = 65536 - 8192 (max_output) - 4096 (safety) = 53248
+        self.assertEqual(settings.input_budget, 53248)
+
+    def test_settings_override_study_id(self):
+        from deepswe_exp.components.configuration.settings import load_settings
+        settings = load_settings(profile="saturn", study_id="pilot-a-saturn-qwen36_20261120_123456")
+        self.assertEqual(settings.study_id, "pilot-a-saturn-qwen36_20261120_123456")
+        self.assertEqual(settings.output_root.name, "pilot-a-saturn-qwen36_20261120_123456")
+
+    def test_classify_response_cases(self):
+        from deepswe_exp.components.agent.context import classify_response
+
+        # Case 1: Normal completion
+        normal_msg = AIMessage(content="Hello", response_metadata={"done_reason": "stop"})
+        res = classify_response(normal_msg, num_ctx=65536, max_output_tokens=8192, input_budget=53248)
+        self.assertEqual(res["kind"], "normal")
+
+        # Case 2: Output truncated (eval_count hit max_output_tokens, input has room)
+        out_trunc_msg = AIMessage(
+            content="",
+            response_metadata={"done_reason": "length", "eval_count": 8192, "prompt_eval_count": 28000},
+        )
+        res = classify_response(out_trunc_msg, num_ctx=65536, max_output_tokens=8192, input_budget=53248)
+        self.assertEqual(res["kind"], "output_truncated")
+
+        # Case 3: Context overflow (total tokens approach num_ctx)
+        ctx_overflow_msg = AIMessage(
+            content="",
+            response_metadata={"done_reason": "length", "eval_count": 10, "prompt_eval_count": 65500},
+        )
+        res = classify_response(ctx_overflow_msg, num_ctx=65536, max_output_tokens=8192, input_budget=53248)
+        self.assertEqual(res["kind"], "context_overflow")
+
+        # Case 4: Truncation unknown (done_reason=length but counters missing)
+        unknown_msg = AIMessage(content="", response_metadata={"done_reason": "length"})
+        res = classify_response(unknown_msg, num_ctx=65536, max_output_tokens=8192, input_budget=53248)
+        self.assertEqual(res["kind"], "truncation_unknown")
 
     def test_run_agent_context_overflow_stop_reason(self):
         import asyncio
@@ -282,6 +356,76 @@ class TestAgentContextIntegration(unittest.TestCase):
             self.assertEqual(model.calls, 3)
             self.assertEqual(len(box.commands), 1)
             self.assertEqual(box.commands[0][0], "echo recovered")
+
+    def test_run_agent_output_truncation_recovers(self):
+        import asyncio
+        from dataclasses import replace
+        from pathlib import Path
+        import tempfile
+        from deepswe_exp.components.agent.agent import run_agent
+        from deepswe_exp.components.configuration.settings import load_settings
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            base_settings = load_settings(profile="saturn")
+            config = {**base_settings.config, "budget": {**base_settings.budget, "max_model_requests": 5}}
+            settings = replace(base_settings, config=config)
+            model = OutputTruncatedFakeModel(recover=True)
+            box = FakeBox()
+            ledger = FakeLedger()
+
+            result = asyncio.run(run_agent(
+                settings=settings,
+                instruction="Fix the bug",
+                box=box,
+                output_dir=tmp_path,
+                ledger=ledger,
+                model=model,
+            ))
+
+            # Turn 1: truncated. Injected warning HumanMessage.
+            # Turn 2: recovered with sed command.
+            # Turn 3: finished.
+            self.assertEqual(result["stop_reason"], "model_finished")
+            self.assertEqual(model.calls, 3)
+            self.assertEqual(len(box.commands), 1)
+            self.assertIn("sed -i", box.commands[0][0])
+            self.assertTrue((tmp_path / "errors.jsonl").is_file())
+            err_content = (tmp_path / "errors.jsonl").read_text(encoding="utf-8")
+            self.assertIn("OutputTruncated", err_content)
+
+    def test_run_agent_output_truncation_exhausted(self):
+        import asyncio
+        from dataclasses import replace
+        from pathlib import Path
+        import tempfile
+        from deepswe_exp.components.agent.agent import run_agent
+        from deepswe_exp.components.configuration.settings import load_settings
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            base_settings = load_settings(profile="saturn")
+            config = {**base_settings.config, "budget": {**base_settings.budget, "max_model_requests": 5}}
+            settings = replace(base_settings, config=config)
+            model = OutputTruncatedFakeModel(recover=False)
+            box = FakeBox()
+            ledger = FakeLedger()
+
+            result = asyncio.run(run_agent(
+                settings=settings,
+                instruction="Fix the bug",
+                box=box,
+                output_dir=tmp_path,
+                ledger=ledger,
+                model=model,
+            ))
+
+            # Must stop with output_truncated after retry fails
+            self.assertEqual(result["stop_reason"], "output_truncated")
+            self.assertEqual(model.calls, 2)
+            self.assertTrue((tmp_path / "errors.jsonl").is_file())
+            err_content = (tmp_path / "errors.jsonl").read_text(encoding="utf-8")
+            self.assertIn("OutputTruncated", err_content)
 
 
 

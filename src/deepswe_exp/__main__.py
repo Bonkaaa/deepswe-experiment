@@ -14,11 +14,13 @@ def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="deepswe-exp")
     parser.add_argument("--config", default=None, help="Study YAML (defaults to this repository's config/study.yaml)")
     parser.add_argument("--profile", default=None, help="Server profile (e.g. saturn, neptune)")
+    parser.add_argument("--study-id", default=None, help="Override study_id in configuration (e.g. to append timestamp)")
     commands = parser.add_subparsers(dest="command", required=True)
     for name in ("doctor", "check-model", "prepare", "validate", "plan-runs", "run-next", "run-all", "evaluate", "summarize"):
         sub = commands.add_parser(name)
         sub.add_argument("--config", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
         sub.add_argument("--profile", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
+        sub.add_argument("--study-id", default=argparse.SUPPRESS, help=argparse.SUPPRESS)
         if name in ("prepare", "validate", "plan-runs", "run-next", "run-all", "evaluate"):
             sub.add_argument("--task", help="Limit this command to one configured task")
         if name in ("run-next", "evaluate"):
@@ -97,7 +99,8 @@ def main(argv: list[str] | None = None) -> int:
     try:
         config_arg = getattr(args, "config", None)
         profile_arg = getattr(args, "profile", None)
-        settings = load_settings(config_path=config_arg, profile=profile_arg)
+        study_id_arg = getattr(args, "study_id", None)
+        settings = load_settings(config_path=config_arg, profile=profile_arg, study_id=study_id_arg)
         if args.command == "doctor":
             return _doctor(settings)
         if args.command == "check-model":

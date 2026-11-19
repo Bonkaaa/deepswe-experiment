@@ -31,6 +31,7 @@ Out of scope:
 
 - Start with a compact inspection of repository state and relevant implementation points. Batch independent read-only shell commands into one `run_shell` call when practical, while keeping output small enough to inspect.
 - Inspect files economically: NEVER dump entire large files using `cat`. Use `head -n 50`, `tail -n 50`, `sed -n 'X,Yp'`, or `grep -n` to examine targeted code regions.
+- When modifying code, make focused, targeted changes (e.g. using `python3 -c '...'`, `sed -i`, or writing small patches). NEVER attempt to dump entire large files via `cat << 'EOF'` in a single tool call, as this easily exceeds single-turn output limits and causes truncation.
 - Move decisively from inspection to implementation within your first 5–8 turns. Do not spend excessive turns inspecting without making edits; an agent that only inspects without modifying files will fail the task.
 - Choose checks in this order: syntax/static checks or the narrowest relevant tests, then broader tests if the change warrants them and the remaining budget allows. Do not rerun an unchanged failing command without a concrete reason.
 - Before finishing, inspect `git status` and `git diff`. Verify that your modifications are present, minimal, and directly solve the task. Do not claim completion if no code changes were made. If the task explicitly requires a new branch or commit, verify the branch and commit state.

@@ -242,3 +242,86 @@ def build_request_context(
     stats["estimated_tokens_after"] = current_tokens
 
     return assembled, stats
+
+
+def classify_response(
+    response: BaseMessage,
+    *,
+    num_ctx: int,
+    max_output_tokens: int,
+    input_budget: int,
+) -> dict[str, Any]:
+    """Classify model response termination cause.
+    
+    Returns:
+        kind: 'normal' | 'output_truncated' | 'context_overflow' | 'truncation_unknown'
+        prompt_tokens: int | None
+        output_tokens: int | None
+        total_tokens: int | None
+        done_reason: str | None
+        has_tool_calls: bool
+    """
+    resp_meta = getattr(response, "response_metadata", {}) or {}
+    usage_meta = getattr(response, "usage_metadata", {}) or {}
+
+    done_reason = resp_meta.get("done_reason") or resp_meta.get("finish_reason")
+    is_length = done_reason == "length"
+
+    prompt_tokens = usage_meta.get("input_tokens") or resp_meta.get("prompt_eval_count")
+    output_tokens = usage_meta.get("output_tokens") or resp_meta.get("eval_count")
+    total_tokens = usage_meta.get("total_tokens")
+    if total_tokens is None and prompt_tokens is not None and output_tokens is not None:
+        total_tokens = prompt_tokens + output_tokens
+
+    has_tool_calls = bool(getattr(response, "tool_calls", None))
+
+    if not is_length:
+        return {
+            "kind": "normal",
+            "prompt_tokens": prompt_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": total_tokens,
+            "done_reason": done_reason,
+            "has_tool_calls": has_tool_calls,
+        }
+
+    # If is_length:
+    # 1. Output generation reached or approached max_output_tokens
+    if output_tokens is not None and output_tokens >= (max_output_tokens - 16):
+        # Is input context window also full?
+        if total_tokens is not None and total_tokens >= (num_ctx - 64):
+            kind = "context_overflow"
+        else:
+            kind = "output_truncated"
+        return {
+            "kind": kind,
+            "prompt_tokens": prompt_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": total_tokens,
+            "done_reason": done_reason,
+            "has_tool_calls": has_tool_calls,
+        }
+
+    # 2. Total tokens reached or approached num_ctx, or prompt exceeded input_budget
+    if (total_tokens is not None and total_tokens >= (num_ctx - 64)) or (
+        prompt_tokens is not None and prompt_tokens >= input_budget
+    ):
+        return {
+            "kind": "context_overflow",
+            "prompt_tokens": prompt_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": total_tokens,
+            "done_reason": done_reason,
+            "has_tool_calls": has_tool_calls,
+        }
+
+    # 3. Inconclusive counters
+    kind = "truncation_unknown"
+    return {
+        "kind": kind,
+        "prompt_tokens": prompt_tokens,
+        "output_tokens": output_tokens,
+        "total_tokens": total_tokens,
+        "done_reason": done_reason,
+        "has_tool_calls": has_tool_calls,
+    }
