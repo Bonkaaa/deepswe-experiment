@@ -265,7 +265,7 @@ def classify_response(
     usage_meta = getattr(response, "usage_metadata", {}) or {}
 
     done_reason = resp_meta.get("done_reason") or resp_meta.get("finish_reason")
-    is_length = done_reason == "length"
+    is_length = str(done_reason).lower() in ("length", "max_tokens")
 
     prompt_tokens = usage_meta.get("input_tokens") or resp_meta.get("prompt_eval_count")
     output_tokens = usage_meta.get("output_tokens") or resp_meta.get("eval_count")
