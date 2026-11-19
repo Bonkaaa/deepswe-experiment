@@ -17,8 +17,8 @@ BUDGET_KEYS = (
     "tool_timeout_seconds",
 )
 MAX_BUDGET = {
-    "max_model_requests": 25,
-    "wall_time_seconds": 1800,
+    "max_model_requests": 200,
+    "wall_time_seconds": 7200,
     "max_output_tokens": 4096,
     "max_tool_output_chars": 8000,
     "tool_timeout_seconds": 120,
@@ -193,21 +193,44 @@ def load_settings(
             raise ValueError(f"Unknown profile: {profile}; cannot find {prof_file}")
         prof_config = _validate_profile(yaml.safe_load(prof_file.read_text(encoding="utf-8")))
 
+        def _norm_endpoint(val: str) -> str:
+            s = str(val).strip().lower()
+            for prefix in ("http://", "https://"):
+                if s.startswith(prefix):
+                    s = s[len(prefix):]
+            return s.rstrip("/")
+
+        def _norm_path(val: str) -> str:
+            p = Path(str(val).strip())
+            if not p.is_absolute():
+                p = (root / p).resolve()
+            else:
+                p = p.resolve()
+            return str(p).lower()
+
         checks = [
-            ("MODEL", prof_config.get("model")),
-            ("MODEL_PROVIDER", prof_config.get("provider")),
-            ("OLLAMA_BASE_URL", prof_config.get("ollama", {}).get("base_url")),
-            ("OLLAMA_HOST", prof_config.get("ollama", {}).get("base_url")),
-            ("OLLAMA_MODELS", prof_config.get("ollama", {}).get("models_dir")),
-            ("OLLAMA_NUM_CTX", str(prof_config.get("ollama", {}).get("num_ctx", ""))),
+            ("MODEL", prof_config.get("model"), "str"),
+            ("MODEL_PROVIDER", prof_config.get("provider"), "str"),
+            ("OLLAMA_BASE_URL", prof_config.get("ollama", {}).get("base_url"), "endpoint"),
+            ("OLLAMA_HOST", prof_config.get("ollama", {}).get("base_url"), "endpoint"),
+            ("OLLAMA_MODELS", prof_config.get("ollama", {}).get("models_dir"), "path"),
+            ("OLLAMA_NUM_CTX", str(prof_config.get("ollama", {}).get("num_ctx", "")), "str"),
         ]
-        for var_name, prof_val in checks:
+        for var_name, prof_val, kind in checks:
             env_val = os.environ.get(var_name) or env.get(var_name)
-            if env_val and prof_val and str(env_val).strip() != str(prof_val).strip():
-                sys.stderr.write(
-                    f"[WARNING] Environment {var_name}='{env_val}' conflicts with profile '{profile}' value '{prof_val}'. "
-                    f"Please 'unset {var_name}' or remove it from .env before running.\n"
-                )
+            if env_val and prof_val:
+                conflict = False
+                if kind == "endpoint":
+                    conflict = _norm_endpoint(env_val) != _norm_endpoint(prof_val)
+                elif kind == "path":
+                    conflict = _norm_path(env_val) != _norm_path(prof_val)
+                else:
+                    conflict = str(env_val).strip() != str(prof_val).strip()
+                if conflict:
+                    sys.stderr.write(
+                        f"[WARNING] Environment {var_name}='{env_val}' conflicts with profile '{profile}' value '{prof_val}'. "
+                        f"Please 'unset {var_name}' or remove it from .env before running.\n"
+                    )
 
         if config_path is None:
             study_path = (root / prof_config["study_config"]).resolve()

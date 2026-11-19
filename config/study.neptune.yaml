@@ -9,8 +9,8 @@ branches:
   - "0"
 sample_seed: 42
 budget:
-  max_model_requests: 25
-  wall_time_seconds: 1800
+  max_model_requests: 200
+  wall_time_seconds: 7200
   max_output_tokens: 4096
   max_tool_output_chars: 8000
   tool_timeout_seconds: 120

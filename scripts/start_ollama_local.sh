@@ -32,11 +32,15 @@ models_dir = str(s.ollama_models_dir) if s.ollama_models_dir else ""
 state_dir = str(s.ollama_state_dir) if s.ollama_state_dir else f"scratch/ollama/{profile}"
 binary = str(s.ollama_binary) if s.ollama_binary else "ollama"
 model = str(s.model)
+num_parallel = str(s.ollama_options.get("num_parallel", 1))
+max_loaded_models = str(s.ollama_options.get("max_loaded_models", 1))
 print(f"BASE_URL={shlex.quote(base_url)}")
 print(f"MODELS_DIR={shlex.quote(models_dir)}")
 print(f"STATE_DIR={shlex.quote(state_dir)}")
 print(f"BINARY={shlex.quote(binary)}")
 print(f"MODEL={shlex.quote(model)}")
+print(f"NUM_PARALLEL={shlex.quote(num_parallel)}")
+print(f"MAX_LOADED_MODELS={shlex.quote(max_loaded_models)}")
 ' "$PROFILE")"
 
 # Resolve STATE_DIR to absolute path if relative
@@ -49,14 +53,25 @@ mkdir -p "$STATE_DIR"
 PID_FILE="${STATE_DIR}/ollama.pid"
 LOG_FILE="${STATE_DIR}/ollama.log"
 
+verify_model() {
+  if ! curl -s "${BASE_URL}/api/tags" | grep -q "\"${MODEL}\""; then
+    echo "[start_ollama] WARNING: Model '${MODEL}' not found in '${BASE_URL}/api/tags'. Please ensure the model is pulled." >&2
+  else
+    echo "[start_ollama] Model '${MODEL}' verified in Ollama repository."
+  fi
+}
+
 echo "[start_ollama] Checking if Ollama is already active at ${BASE_URL}..."
 if curl -s -f "${BASE_URL}/api/tags" >/dev/null 2>&1; then
   echo "[start_ollama] Ollama is already running and reachable at ${BASE_URL}."
+  verify_model
   exit 0
 fi
 
 echo "[start_ollama] Starting Ollama server background daemon..."
 export OLLAMA_HOST="${BASE_URL}"
+export OLLAMA_NUM_PARALLEL="${NUM_PARALLEL}"
+export OLLAMA_MAX_LOADED_MODELS="${MAX_LOADED_MODELS}"
 if [[ -n "$MODELS_DIR" ]]; then
   if [[ "$MODELS_DIR" != /* ]]; then
     MODELS_DIR="${REPO_ROOT}/${MODELS_DIR}"
@@ -75,6 +90,7 @@ WAITED=0
 while [[ $WAITED -lt $MAX_WAIT ]]; do
   if curl -s -f "${BASE_URL}/api/tags" >/dev/null 2>&1; then
     echo "[start_ollama] Ollama is healthy and ready (PID: ${SERVER_PID}, Profile: ${PROFILE})."
+    verify_model
     exit 0
   fi
   sleep 1

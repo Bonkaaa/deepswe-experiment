@@ -62,6 +62,16 @@ class Phase1Phase2Tests(unittest.TestCase):
             self.assertIn("[WARNING]", stderr_capture.getvalue())
             self.assertIn("conflicting-model-tag", stderr_capture.getvalue())
 
+    def test_env_var_no_false_positive_warning(self):
+        repo_root = Path(__file__).resolve().parents[1]
+        abs_models = str(repo_root / ".local" / "ollama-neptune" / "models")
+        with patch.dict("os.environ", {"OLLAMA_HOST": "127.0.0.1:11435", "OLLAMA_MODELS": abs_models}):
+            stderr_capture = io.StringIO()
+            with patch("sys.stderr", stderr_capture):
+                settings = load_settings(profile="neptune")
+            self.assertNotIn("OLLAMA_HOST", stderr_capture.getvalue())
+            self.assertNotIn("OLLAMA_MODELS", stderr_capture.getvalue())
+
     def test_local_ledger(self):
         with scratch_directory() as temp_dir:
             ledger_path = temp_dir / "quota.jsonl"
@@ -117,9 +127,9 @@ class Phase1Phase2Tests(unittest.TestCase):
                     model=mock_model,
                 )
             )
-            # Since mock always returns tool calls, it should stop on request_budget (25 requests)
+            # Since mock always returns tool calls, it should stop on request_budget
             self.assertEqual(result["stop_reason"], "request_budget")
-            self.assertEqual(result["model_requests"], 25)
+            self.assertEqual(result["model_requests"], settings.budget["max_model_requests"])
             self.assertTrue((out / "trajectory.json").is_file())
             traj = json.loads((out / "trajectory.json").read_text(encoding="utf-8"))
             self.assertEqual(traj["stop_reason"], "request_budget")

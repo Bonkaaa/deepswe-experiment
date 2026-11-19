@@ -48,6 +48,18 @@ ollama run qwen3.8:27b
 
 File activation chỉ thay đổi biến môi trường và `PATH` của terminal hiện tại; lệnh `ollama` sẽ trỏ vào binary trong `.local/ollama-neptune/`. Nếu máy Neptune vừa reboot nên Ollama server đã dừng, chạy lại `bash scripts/setup_ollama_neptune.sh`; binary/model có sẵn sẽ được dùng lại.
 
-## Giới hạn triển khai hiện tại
+## Trạng thái tích hợp và vận hành
 
-Các script này cài runtime và tải model của Neptune trong repo; không thay đổi runtime/model Qwen3.6 hiện có trên Saturn. CLI DeepSWE hiện tại vẫn mặc định dùng Gemini; provider Ollama trong ứng dụng chưa được triển khai. Vì vậy API Ollama có thể kiểm tra độc lập sau setup, nhưng chưa thể chạy `deepswe-exp` với model này cho tới khi hoàn tất adapter Ollama trong code.
+Provider Ollama và profile `--profile neptune` đã được tích hợp đầy đủ vào ứng dụng `deepswe-exp`. 
+Sau khi hoàn tất setup Ollama trên Neptune theo hướng dẫn trên, bạn có thể thực hiện kiểm tra và chạy benchmark đầy đủ:
+
+```bash
+# Kiểm tra hệ thống và xác nhận model trên Neptune
+uv run --frozen python -m deepswe_exp doctor --profile neptune
+
+# Kiểm tra kết nối model và khả năng gọi công cụ
+uv run --frozen python -m deepswe_exp check-model --profile neptune
+
+# Khởi động One-Click toàn bộ quy trình thực nghiệm A trên Neptune
+bash scripts/run_experiment_a_neptune.sh
+```

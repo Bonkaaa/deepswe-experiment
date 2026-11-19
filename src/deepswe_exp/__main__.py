@@ -57,6 +57,17 @@ def _doctor(settings) -> int:
         detail = f"version {meta['version']}" if ollama_ok else "server not responding"
         checks.append(_print_check("Ollama Server Endpoint", ollama_ok, detail))
 
+        model_installed = bool(meta.get("digest"))
+        if model_installed:
+            digest_str = meta["digest"]
+            short_digest = digest_str[:19] + "..." if len(digest_str) > 19 else digest_str
+            model_detail = f"available (digest: {short_digest})"
+        elif ollama_ok:
+            model_detail = f"model '{settings.model}' not found on server (run 'ollama pull {settings.model}')"
+        else:
+            model_detail = "server not responding"
+        checks.append(_print_check("Ollama Model Installed", model_installed, model_detail))
+
     checks.append(_print_check("System prompt", settings.prompt_path.is_file() and bool(settings.prompt_path.read_text(encoding="utf-8").strip()), str(settings.prompt_path)))
     for task_id in settings.task_ids:
         try:

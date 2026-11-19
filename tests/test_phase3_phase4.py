@@ -115,7 +115,7 @@ class Phase3Phase4Tests(unittest.TestCase):
 
     def test_doctor_profile_ollama(self):
         with patch("deepswe_exp.components.execution.docker_env.docker_status", return_value="available"), \
-             patch("deepswe_exp.components.results.storage.fetch_ollama_metadata", return_value={"version": "0.5.4"}):
+             patch("deepswe_exp.components.results.storage.fetch_ollama_metadata", return_value={"version": "0.5.4", "digest": "sha256:qwen35testdigest"}):
             stdout_buf = io.StringIO()
             with patch("sys.stdout", stdout_buf):
                 code = _doctor(self.saturn_settings)
@@ -126,7 +126,20 @@ class Phase3Phase4Tests(unittest.TestCase):
             self.assertIn("Ollama Base URL", output)
             self.assertIn("Ollama Context", output)
             self.assertIn("version 0.5.4", output)
+            self.assertIn("Ollama Model Installed", output)
+            self.assertIn("sha256:qwen35testd", output)
             self.assertNotIn("Gemini API key", output)
+
+    def test_doctor_profile_ollama_missing_model(self):
+        with patch("deepswe_exp.components.execution.docker_env.docker_status", return_value="available"), \
+             patch("deepswe_exp.components.results.storage.fetch_ollama_metadata", return_value={"version": "0.5.4", "digest": None}):
+            stdout_buf = io.StringIO()
+            with patch("sys.stdout", stdout_buf):
+                code = _doctor(self.saturn_settings)
+            output = stdout_buf.getvalue()
+            self.assertEqual(code, 2)
+            self.assertIn("MISSING  Ollama Model Installed", output)
+            self.assertIn("not found on server", output)
 
     def test_check_model_tool_calling_flow(self):
         call_count = 0
