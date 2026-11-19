@@ -10,3 +10,4 @@ runs/
 
 # Local Ollama runtime and model files
 .local/
+pilot-*/

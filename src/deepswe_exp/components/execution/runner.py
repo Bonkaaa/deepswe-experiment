@@ -202,7 +202,7 @@ def run_next(settings, backend=None, task_id=None, run_id=None, restart=False):
         write_json(out / "agent_result.json", agent_result)
 
         if agent_result["stop_reason"] in (
-            "provider_error", "quota_interrupted", "docker_error", "internal_error", "format_error"
+            "provider_error", "quota_interrupted", "docker_error", "internal_error", "format_error", "context_overflow"
         ):
             run["status"] = "interrupted"
         else:

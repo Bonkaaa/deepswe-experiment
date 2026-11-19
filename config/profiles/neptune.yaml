@@ -8,6 +8,7 @@ ollama:
   models_dir: .local/ollama-neptune/models
   state_dir: .local/ollama-neptune
   num_ctx: 32768
+  context_safety_tokens: 4096
   temperature: 0.0
   num_parallel: 1
   max_loaded_models: 1

@@ -10,6 +10,7 @@ from ..results.storage import write_json,append_event
 from ..execution.docker_env import DockerFailure
 from ..results.schemas import AgentResult
 from .quota import InputBudget,QuotaUnavailable
+from .context import build_request_context, truncate_output
 
 def load_system_prompt(path):
     text=Path(path).read_text(encoding='utf-8').strip()
@@ -42,10 +43,11 @@ async def run_agent(*,settings,instruction,box,output_dir,ledger,protocol_hash='
     model=model or build_model(settings)
     budget=settings.budget; started=clock(); deadline=started+budget['wall_time_seconds']
     messages=[SystemMessage(content=load_system_prompt(settings.prompt_path)),HumanMessage(content=instruction)]
-    calls=0; stop='internal_error'; usage=[]; commands=[]
+    calls=0; stop='internal_error'; usage=[]; commands=[]; context_stats={}
+    emergency_retry_done=False
     def save():
         data={'schema_version':1,'protocol_hash':protocol_hash,'stop_reason':stop,'model_requests':calls,'elapsed_seconds':clock()-started,
-              'usage':usage,'messages':messages_to_dict(messages),'commands':commands}
+              'usage':usage,'messages':messages_to_dict(messages),'commands':commands,'context_stats':context_stats}
         # Secrets are never part of model config; redact any accidentally echoed key.
         text=settings.redact(json.dumps(data,ensure_ascii=False,default=str))
         write_json(output_dir/'trajectory.json',json.loads(text))
@@ -54,7 +56,14 @@ async def run_agent(*,settings,instruction,box,output_dir,ledger,protocol_hash='
             save()
             if calls>=budget['max_model_requests']: stop='request_budget'; break
             if clock()>=deadline: stop='time_budget'; break
-            serialized=json.dumps(messages_to_dict(messages),ensure_ascii=False)
+            input_budget = getattr(settings, "input_budget", 1_000_000)
+            request_messages, ctx_stats = build_request_context(
+                messages,
+                input_budget=input_budget,
+                min_recent_turns=3,
+            )
+            context_stats = ctx_stats
+            serialized=json.dumps(messages_to_dict(request_messages),ensure_ascii=False)
             estimate=math.ceil(len(serialized.encode('utf-8'))/3*1.25)+512
             ledger.reserve(estimate,deadline,clock)
             calls+=1; save()
@@ -63,7 +72,7 @@ async def run_agent(*,settings,instruction,box,output_dir,ledger,protocol_hash='
                 invoke_kwargs = {"max_retries": 0, "timeout": max(.01, deadline - clock())}
             try:
                 response = await asyncio.wait_for(
-                    model.ainvoke(messages, **invoke_kwargs),
+                    model.ainvoke(request_messages, **invoke_kwargs),
                     timeout=max(.01, deadline - clock()),
                 )
             except asyncio.TimeoutError:
@@ -72,9 +81,58 @@ async def run_agent(*,settings,instruction,box,output_dir,ledger,protocol_hash='
                 stop='provider_error'
                 append_event(output_dir/'errors.jsonl',{'type':type(exc).__name__,'message':settings.redact(str(exc))})
                 break
+
+            resp_meta = getattr(response, "response_metadata", {}) or {}
+            is_length_overflow = (
+                resp_meta.get("done_reason") == "length"
+                or resp_meta.get("finish_reason") == "length"
+            )
+            if is_length_overflow and not response.tool_calls and not emergency_retry_done:
+                emergency_retry_done = True
+                request_messages, ctx_stats = build_request_context(
+                    messages,
+                    input_budget=input_budget,
+                    force_compact=True,
+                    min_recent_turns=2,
+                )
+                context_stats = ctx_stats
+                calls += 1; save()
+                try:
+                    response = await asyncio.wait_for(
+                        model.ainvoke(request_messages, **invoke_kwargs),
+                        timeout=max(.01, deadline - clock()),
+                    )
+                except asyncio.TimeoutError:
+                    stop = 'time_budget'; break
+                except Exception as exc:
+                    stop = 'provider_error'
+                    append_event(output_dir / 'errors.jsonl', {'type': type(exc).__name__, 'message': settings.redact(str(exc))})
+                    break
+                resp_meta = getattr(response, "response_metadata", {}) or {}
+                is_length_overflow = (
+                    resp_meta.get("done_reason") == "length"
+                    or resp_meta.get("finish_reason") == "length"
+                )
+
             meta = getattr(response, "usage_metadata", None) or {}
             messages.append(response); usage.append(meta)
             ledger.usage(meta); save()
+
+            if is_length_overflow and not response.tool_calls:
+                stop = 'context_overflow'
+                append_event(output_dir / 'errors.jsonl', {
+                    'type': 'ContextOverflow',
+                    'message': f'Model output truncated due to context window limit ({input_budget} tokens)'
+                })
+                break
+            if is_length_overflow and response.invalid_tool_calls:
+                stop = 'context_overflow'
+                append_event(output_dir / 'errors.jsonl', {
+                    'type': 'ContextOverflow',
+                    'message': 'Tool call was truncated mid-JSON by context window limit'
+                })
+                break
+
             if not response.tool_calls:
                 stop='model_finished' if not response.invalid_tool_calls else 'format_error'; break
             for call in response.tool_calls:
@@ -88,7 +146,7 @@ async def run_agent(*,settings,instruction,box,output_dir,ledger,protocol_hash='
                     commands.append({'command':call['args']['command'],'exit_code':rc,'output':raw})
                     append_event(output_dir/'commands.jsonl',commands[-1])
                     cap=budget['max_tool_output_chars']
-                    content=f'exit_code={rc}\n'+raw[:cap]+(f'\n[TRUNCATED: {len(raw)-cap} characters omitted]' if len(raw)>cap else '')
+                    content=f'exit_code={rc}\n'+truncate_output(raw, cap, head_ratio=0.6)
                 messages.append(ToolMessage(content=content,tool_call_id=call['id'])); save()
             if stop=='time_budget': break
     except InputBudget: stop='input_budget'

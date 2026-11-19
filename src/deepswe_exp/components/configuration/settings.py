@@ -45,10 +45,18 @@ class Settings:
     model_provider: str = "google"
     ollama_base_url: str = "http://127.0.0.1:11434"
     ollama_num_ctx: int = 32768
+    ollama_context_safety_tokens: int = 4096
     ollama_binary: Path | None = None
     ollama_models_dir: Path | None = None
     ollama_state_dir: Path | None = None
     ollama_options: dict = field(default_factory=dict)
+
+    @property
+    def input_budget(self) -> int:
+        if self.model_provider != "ollama":
+            return 1_000_000
+        max_output = int(self.budget.get("max_output_tokens", 4096))
+        return max(1024, self.ollama_num_ctx - max_output - self.ollama_context_safety_tokens)
 
     @property
     def study_id(self) -> str:
@@ -253,6 +261,7 @@ def load_settings(
             model_provider=provider,
             ollama_base_url=str(ollama.get("base_url", "http://127.0.0.1:11434")),
             ollama_num_ctx=int(ollama.get("num_ctx", 32768)),
+            ollama_context_safety_tokens=int(ollama.get("context_safety_tokens", 4096)),
             ollama_binary=_resolve_profile_path(root, ollama.get("binary")),
             ollama_models_dir=_resolve_profile_path(root, ollama.get("models_dir")),
             ollama_state_dir=_resolve_profile_path(root, ollama.get("state_dir")),
@@ -272,6 +281,10 @@ def load_settings(
         num_ctx = int(os.environ.get("OLLAMA_NUM_CTX", env.get("OLLAMA_NUM_CTX") or 32768))
     except (ValueError, TypeError):
         num_ctx = 32768
+    try:
+        safety_tokens = int(os.environ.get("OLLAMA_CONTEXT_SAFETY_TOKENS", env.get("OLLAMA_CONTEXT_SAFETY_TOKENS") or 4096))
+    except (ValueError, TypeError):
+        safety_tokens = 4096
 
     return Settings(
         root=root,
@@ -282,4 +295,5 @@ def load_settings(
         model_provider=provider,
         ollama_base_url=base_url,
         ollama_num_ctx=num_ctx,
+        ollama_context_safety_tokens=safety_tokens,
     )
