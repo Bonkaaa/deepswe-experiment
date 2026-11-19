@@ -54,26 +54,32 @@ def check_model_connection(settings, timeout_seconds: int = 45, model=None) -> d
         messages = [
             HumanMessage(content="You are an assistant verifying shell tool access. Execute the command 'echo OK' using the run_shell tool.")
         ]
-        response = asyncio.run(asyncio.wait_for(
-            active_model.ainvoke(messages, **invoke_kwargs),
-            timeout=timeout_seconds + 2,
-        ))
 
-        tool_calls = getattr(response, "tool_calls", None) or []
-        shell_call = next((call for call in tool_calls if call.get("name") == "run_shell"), None)
-
-        if shell_call:
-            messages.append(response)
-            messages.append(ToolMessage(content="exit_code=0\nOK", tool_call_id=shell_call["id"]))
-            result["request_count"] += 1
-            append_event(ledger, {
-                "type": "request", "time": time.time(), "model": settings.model,
-                "project": project, "tokens": 256, "kind": "connectivity_check_round2",
-            })
-            final_response = asyncio.run(asyncio.wait_for(
+        async def _do_rounds():
+            first_response = await asyncio.wait_for(
                 active_model.ainvoke(messages, **invoke_kwargs),
                 timeout=timeout_seconds + 2,
-            ))
+            )
+            tool_calls = getattr(first_response, "tool_calls", None) or []
+            shell_call = next((call for call in tool_calls if call.get("name") == "run_shell"), None)
+            second_response = None
+            if shell_call:
+                messages.append(first_response)
+                messages.append(ToolMessage(content="exit_code=0\nOK", tool_call_id=shell_call["id"]))
+                result["request_count"] += 1
+                append_event(ledger, {
+                    "type": "request", "time": time.time(), "model": settings.model,
+                    "project": project, "tokens": 256, "kind": "connectivity_check_round2",
+                })
+                second_response = await asyncio.wait_for(
+                    active_model.ainvoke(messages, **invoke_kwargs),
+                    timeout=timeout_seconds + 2,
+                )
+            return first_response, shell_call, second_response
+
+        response, shell_call, final_response = asyncio.run(_do_rounds())
+
+        if shell_call:
             result.update(
                 status="success",
                 tool_calling_verified=True,
