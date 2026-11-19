@@ -18,6 +18,10 @@ def check_model_connection(settings, timeout_seconds: int = 45, model=None) -> d
     elif provider == "ollama" and not settings.model:
         raise ValueError("MODEL is required for check-model")
 
+    # For local providers (e.g. Ollama cold loading weights from disk), allow up to 300s (5 mins)
+    if provider == "ollama" and timeout_seconds == 45:
+        timeout_seconds = 300
+
     started = time.monotonic()
     result = {
         "schema_version": 1,
