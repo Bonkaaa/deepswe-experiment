@@ -7,7 +7,7 @@ ollama:
   binary: .local/ollama/bin/ollama
   models_dir: .local/ollama/models
   state_dir: .local/ollama
-  cuda_visible_devices: "0,1"
+  cuda_visible_devices: "auto"
   num_ctx: 131072
   context_safety_tokens: 8192
   temperature: 0.0

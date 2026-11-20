@@ -4,6 +4,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PROFILE=""
 RESTART=false
+ORIGINAL_CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -47,7 +48,7 @@ print(f"BINARY={shlex.quote(binary)}")
 print(f"MODEL={shlex.quote(model)}")
 print(f"NUM_PARALLEL={shlex.quote(num_parallel)}")
 print(f"MAX_LOADED_MODELS={shlex.quote(max_loaded_models)}")
-print(f"CUDA_VISIBLE_DEVICES={shlex.quote(cuda_visible_devices)}")
+print(f"CUDA_VISIBLE_DEVICES_CONFIG={shlex.quote(cuda_visible_devices)}")
 ' "$PROFILE")"
 
 # Resolve STATE_DIR to absolute path if relative
@@ -89,10 +90,70 @@ echo "[start_ollama] Starting Ollama server background daemon..."
 export OLLAMA_HOST="${BASE_URL}"
 export OLLAMA_NUM_PARALLEL="${NUM_PARALLEL}"
 export OLLAMA_MAX_LOADED_MODELS="${MAX_LOADED_MODELS}"
-if [[ -n "${CUDA_VISIBLE_DEVICES:-}" ]]; then
-  export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES}"
+resolve_gpus() {
+  local cfg="${CUDA_VISIBLE_DEVICES_CONFIG:-}"
+  local target="${ORIGINAL_CUDA_VISIBLE_DEVICES:-$cfg}"
+
+  if [[ -z "$target" ]]; then
+    return 0
+  fi
+
+  if ! command -v nvidia-smi >/dev/null 2>&1; then
+    if [[ "$target" != "auto" ]]; then
+      export CUDA_VISIBLE_DEVICES="$target"
+      echo "[start_ollama] GPU distribution configured: CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES}"
+    fi
+    return 0
+  fi
+
+  # Auto mode: dynamically select top 2 GPUs with most free VRAM
+  if [[ "$target" == "auto" ]]; then
+    local auto_selected
+    auto_selected="$(nvidia-smi --query-gpu=index,memory.free --format=csv,noheader,nounits 2>/dev/null | \
+      sort -t',' -k2 -nr | \
+      head -n 2 | \
+      cut -d',' -f1 | \
+      tr '\n' ',' | sed 's/,$//')"
+    if [[ -n "$auto_selected" ]]; then
+      echo "[start_ollama] Auto-detected idle GPUs with most free VRAM: CUDA_VISIBLE_DEVICES=${auto_selected}"
+      export CUDA_VISIBLE_DEVICES="${auto_selected}"
+    fi
+    return 0
+  fi
+
+  # Explicit list (e.g. "0,1"): check free VRAM per card
+  local busy=false
+  local IFS=','
+  read -ra GPUS <<< "$target"
+  for g in "${GPUS[@]}"; do
+    local free_mb
+    free_mb="$(nvidia-smi --query-gpu=memory.free --format=csv,noheader,nounits -i "$g" 2>/dev/null | head -n1 | tr -d ' ')"
+    if [[ -n "$free_mb" && "$free_mb" -lt 18000 ]]; then
+      echo "[start_ollama] WARNING: Configured GPU $g has only ${free_mb} MiB free VRAM (< 18000 MiB recommended for 128k context)." >&2
+      busy=true
+    fi
+  done
+
+  if [[ "$busy" == true ]]; then
+    echo "[start_ollama] Target GPUs ($target) appear busy. Searching for idle GPUs with sufficient VRAM..." >&2
+    local alt
+    alt="$(nvidia-smi --query-gpu=index,memory.free --format=csv,noheader,nounits 2>/dev/null | \
+      sort -t',' -k2 -nr | \
+      head -n "${#GPUS[@]}" | \
+      cut -d',' -f1 | \
+      tr '\n' ',' | sed 's/,$//')"
+    if [[ -n "$alt" && "$alt" != "$target" ]]; then
+      echo "[start_ollama] Automatically switching to idle GPUs: CUDA_VISIBLE_DEVICES=${alt}"
+      export CUDA_VISIBLE_DEVICES="${alt}"
+      return 0
+    fi
+  fi
+
+  export CUDA_VISIBLE_DEVICES="$target"
   echo "[start_ollama] Multi-GPU distribution configured: CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES}"
-fi
+}
+
+resolve_gpus
 if [[ -n "$MODELS_DIR" ]]; then
   if [[ "$MODELS_DIR" != /* ]]; then
     MODELS_DIR="${REPO_ROOT}/${MODELS_DIR}"
