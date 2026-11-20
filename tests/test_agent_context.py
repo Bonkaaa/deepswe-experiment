@@ -183,21 +183,22 @@ class FakeLedger:
 
 class TruncatedFakeModel:
     """Simulates an Ollama response that gets cut off due to context window length."""
-    def __init__(self, recover_on_retry=False):
+    def __init__(self, recover_on_retry=False, prompt_eval_count=131050):
         self.calls = 0
         self.recover_on_retry = recover_on_retry
+        self.prompt_eval_count = prompt_eval_count
 
     async def ainvoke(self, messages, **kwargs):
         self.calls += 1
         if not self.recover_on_retry:
             # Always cut off due to context window length
             msg = AIMessage(content="Truncated...", tool_calls=[])
-            msg.response_metadata = {"done_reason": "length", "prompt_eval_count": 65500, "eval_count": 10, "done": True}
+            msg.response_metadata = {"done_reason": "length", "prompt_eval_count": self.prompt_eval_count, "eval_count": 10, "done": True}
             return msg
         if self.calls == 1:
             # First attempt cut off by context limit
             msg = AIMessage(content="Truncated...", tool_calls=[])
-            msg.response_metadata = {"done_reason": "length", "prompt_eval_count": 65500, "eval_count": 10, "done": True}
+            msg.response_metadata = {"done_reason": "length", "prompt_eval_count": self.prompt_eval_count, "eval_count": 10, "done": True}
             return msg
         if self.calls == 2:
             # Recovered on emergency retry: returns a tool call
@@ -212,18 +213,19 @@ class TruncatedFakeModel:
 
 class OutputTruncatedFakeModel:
     """Simulates an Ollama response where output tokens hit max_output_tokens."""
-    def __init__(self, recover=True):
+    def __init__(self, recover=True, max_output_tokens=16384):
         self.calls = 0
         self.recover = recover
+        self.max_output_tokens = max_output_tokens
 
     async def ainvoke(self, messages, **kwargs):
         self.calls += 1
         if self.calls == 1:
-            # First attempt hits max_output_tokens (8192)
+            # First attempt hits max_output_tokens
             msg = AIMessage(content="", tool_calls=[])
             msg.response_metadata = {
                 "done_reason": "length",
-                "eval_count": 8192,
+                "eval_count": self.max_output_tokens,
                 "prompt_eval_count": 28000,
                 "done": True,
             }
@@ -241,7 +243,7 @@ class OutputTruncatedFakeModel:
             msg = AIMessage(content="", tool_calls=[])
             msg.response_metadata = {
                 "done_reason": "length",
-                "eval_count": 8192,
+                "eval_count": self.max_output_tokens,
                 "prompt_eval_count": 28100,
                 "done": True,
             }
@@ -253,10 +255,10 @@ class TestAgentContextIntegration(unittest.TestCase):
     def test_settings_input_budget_calculation(self):
         from deepswe_exp.components.configuration.settings import load_settings
         settings = load_settings(profile="saturn")
-        self.assertEqual(settings.ollama_num_ctx, 65536)
-        self.assertEqual(settings.ollama_context_safety_tokens, 4096)
-        # input_budget = 65536 - 8192 (max_output) - 4096 (safety) = 53248
-        self.assertEqual(settings.input_budget, 53248)
+        self.assertEqual(settings.ollama_num_ctx, 131072)
+        self.assertEqual(settings.ollama_context_safety_tokens, 8192)
+        # input_budget = 131072 - 16384 (max_output) - 8192 (safety) = 106496
+        self.assertEqual(settings.input_budget, 106496)
 
     def test_settings_override_study_id(self):
         from deepswe_exp.components.configuration.settings import load_settings
