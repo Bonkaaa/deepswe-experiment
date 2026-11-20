@@ -48,6 +48,8 @@ async def run_agent(*,settings,instruction,box,output_dir,ledger,protocol_hash='
     emergency_context_retry_done=False
     force_emergency_compact=False
     recovery_feedback=None
+    provider_retries=0
+    max_provider_retries=2
     def save():
         data={'schema_version':1,'protocol_hash':protocol_hash,'stop_reason':stop,'model_requests':calls,'elapsed_seconds':clock()-started,
               'usage':usage,'messages':messages_to_dict(messages),'commands':commands,'context_stats':context_stats}
@@ -88,6 +90,18 @@ async def run_agent(*,settings,instruction,box,output_dir,ledger,protocol_hash='
             except asyncio.TimeoutError:
                 stop='time_budget'; break
             except Exception as exc:
+                if provider_retries < max_provider_retries and clock() < deadline and calls < budget['max_model_requests']:
+                    provider_retries += 1
+                    append_event(output_dir / 'errors.jsonl', {
+                        'type': type(exc).__name__,
+                        'message': f'Transient provider error (retry {provider_retries}/{max_provider_retries}): {settings.redact(str(exc))}',
+                    })
+                    recovery_feedback = (
+                        "System notice: The previous request produced a server-side syntax or communication error. "
+                        "Please continue your task and ensure that any tool call is formatted strictly as run_shell(command=...)."
+                    )
+                    await asyncio.sleep(min(3.0, 1.0 * provider_retries))
+                    continue
                 stop='provider_error'
                 append_event(output_dir/'errors.jsonl',{'type':type(exc).__name__,'message':settings.redact(str(exc))})
                 break
@@ -155,6 +169,7 @@ async def run_agent(*,settings,instruction,box,output_dir,ledger,protocol_hash='
 
             # Turn made valid progress or finished normally
             truncation_retries = 0
+            provider_retries = 0
 
             if not response.tool_calls:
                 stop='model_finished' if not response.invalid_tool_calls else 'format_error'; break

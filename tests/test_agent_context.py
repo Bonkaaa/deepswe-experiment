@@ -251,6 +251,28 @@ class OutputTruncatedFakeModel:
         return AIMessage(content="Done", response_metadata={"done_reason": "stop"})
 
 
+class ProviderErrorFakeModel:
+    """Simulates a model that throws ResponseError/500 and recovers on retry."""
+    def __init__(self, recover=True):
+        self.calls = 0
+        self.recover = recover
+
+    async def ainvoke(self, messages, **kwargs):
+        self.calls += 1
+        if self.calls == 1:
+            raise RuntimeError("expected element type <function> but have <parameter> (status code: 500)")
+        if self.calls == 2 and self.recover:
+            msg = AIMessage(content="", tool_calls=[{
+                "name": "run_shell", "args": {"command": "echo recovered"},
+                "id": "tool-rec-prov", "type": "tool_call",
+            }])
+            msg.response_metadata = {"done_reason": "stop", "eval_count": 50, "prompt_eval_count": 28100, "done": True}
+            return msg
+        if not self.recover:
+            raise RuntimeError("expected element type <function> but have <parameter> (status code: 500)")
+        return AIMessage(content="Done", response_metadata={"done_reason": "stop"})
+
+
 class TestAgentContextIntegration(unittest.TestCase):
     def test_settings_input_budget_calculation(self):
         from deepswe_exp.components.configuration.settings import load_settings
@@ -395,6 +417,73 @@ class TestAgentContextIntegration(unittest.TestCase):
             self.assertTrue((tmp_path / "errors.jsonl").is_file())
             err_content = (tmp_path / "errors.jsonl").read_text(encoding="utf-8")
             self.assertIn("OutputTruncated", err_content)
+
+    def test_run_agent_provider_error_recovers(self):
+        import asyncio
+        from dataclasses import replace
+        from pathlib import Path
+        import tempfile
+        from deepswe_exp.components.agent.agent import run_agent
+        from deepswe_exp.components.configuration.settings import load_settings
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            base_settings = load_settings(profile="saturn")
+            config = {**base_settings.config, "budget": {**base_settings.budget, "max_model_requests": 5}}
+            settings = replace(base_settings, config=config)
+            model = ProviderErrorFakeModel(recover=True)
+            box = FakeBox()
+            ledger = FakeLedger()
+
+            result = asyncio.run(run_agent(
+                settings=settings,
+                instruction="Fix the bug",
+                box=box,
+                output_dir=tmp_path,
+                ledger=ledger,
+                model=model,
+            ))
+
+            self.assertEqual(result["stop_reason"], "model_finished")
+            self.assertEqual(model.calls, 3)
+            self.assertEqual(len(box.commands), 1)
+            self.assertEqual(box.commands[0][0], "echo recovered")
+            self.assertTrue((tmp_path / "errors.jsonl").is_file())
+            err_content = (tmp_path / "errors.jsonl").read_text(encoding="utf-8")
+            self.assertIn("Transient provider error", err_content)
+
+    def test_run_agent_provider_error_exhausted(self):
+        import asyncio
+        from dataclasses import replace
+        from pathlib import Path
+        import tempfile
+        from deepswe_exp.components.agent.agent import run_agent
+        from deepswe_exp.components.configuration.settings import load_settings
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            base_settings = load_settings(profile="saturn")
+            config = {**base_settings.config, "budget": {**base_settings.budget, "max_model_requests": 5}}
+            settings = replace(base_settings, config=config)
+            model = ProviderErrorFakeModel(recover=False)
+            box = FakeBox()
+            ledger = FakeLedger()
+
+            result = asyncio.run(run_agent(
+                settings=settings,
+                instruction="Fix the bug",
+                box=box,
+                output_dir=tmp_path,
+                ledger=ledger,
+                model=model,
+            ))
+
+            self.assertEqual(result["stop_reason"], "provider_error")
+            # 1 initial call + 2 retries = 3 calls
+            self.assertEqual(model.calls, 3)
+            self.assertTrue((tmp_path / "errors.jsonl").is_file())
+            err_content = (tmp_path / "errors.jsonl").read_text(encoding="utf-8")
+            self.assertIn("expected element type", err_content)
 
     def test_run_agent_output_truncation_exhausted(self):
         import asyncio
