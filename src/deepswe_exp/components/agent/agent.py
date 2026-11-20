@@ -45,6 +45,7 @@ async def run_agent(*,settings,instruction,box,output_dir,ledger,protocol_hash='
     messages=[SystemMessage(content=load_system_prompt(settings.prompt_path)),HumanMessage(content=instruction)]
     calls=0; stop='internal_error'; usage=[]; commands=[]; context_stats={}
     truncation_retries=0
+    max_truncation_retries=2
     emergency_context_retry_done=False
     force_emergency_compact=False
     recovery_feedback=None
@@ -120,19 +121,28 @@ async def run_agent(*,settings,instruction,box,output_dir,ledger,protocol_hash='
 
             if kind == "output_truncated":
                 if not response.tool_calls or getattr(response, "invalid_tool_calls", None):
-                    if truncation_retries < 1:
+                    if truncation_retries < max_truncation_retries and clock() < deadline and calls < budget['max_model_requests']:
                         truncation_retries += 1
                         append_event(output_dir / 'errors.jsonl', {
                             'type': 'OutputTruncated',
-                            'message': f'Single-turn output limit hit ({budget["max_output_tokens"]} tokens). Attempting 1-shot recovery retry.',
+                            'message': f'Single-turn output limit hit ({budget["max_output_tokens"]} tokens). Attempting recovery retry ({truncation_retries}/{max_truncation_retries}).',
                         })
-                        recovery_feedback = (
-                            f"Warning: Your previous response exceeded the single-turn output token limit "
-                            f"({budget['max_output_tokens']} tokens) and was truncated before completing the command. "
-                            "Do NOT attempt to rewrite or dump entire large files with 'cat << EOF'. "
-                            "Please make targeted, smaller edits (e.g. using 'sed -i', 'python3 -c \"...\"', or a focused patch) "
-                            "to modify only the necessary lines."
-                        )
+                        if messages and messages[-1] is response:
+                            messages.pop()
+                        if truncation_retries == 1:
+                            recovery_feedback = (
+                                f"[SYSTEM ALERT]: Your previous command was REJECTED because it exceeded the single-turn output token limit "
+                                f"({budget['max_output_tokens']} tokens, ~50,000 characters) and was cut off. "
+                                "Do NOT rewrite or dump full files using 'cat << EOF'. "
+                                "You MUST make small, targeted changes using 'sed -i', 'python3 -c \"...\"', or a focused patch under 50 lines. "
+                                "Issue a small, targeted command now."
+                            )
+                        else:
+                            recovery_feedback = (
+                                f"[CRITICAL SYSTEM WARNING]: Second attempt ALSO exceeded {budget['max_output_tokens']} tokens. "
+                                "Any command longer than 1,000 tokens will cause immediate failure! "
+                                "You MUST execute a small diagnostic command (e.g. 'git status', 'git diff', or a specific 'sed -i' substitution of 1-3 lines) right now."
+                            )
                         continue
                     stop = 'output_truncated'
                     append_event(output_dir / 'errors.jsonl', {

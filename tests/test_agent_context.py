@@ -511,9 +511,9 @@ class TestAgentContextIntegration(unittest.TestCase):
                 model=model,
             ))
 
-            # Must stop with output_truncated after retry fails
+            # Must stop with output_truncated after retries exhausted (1 initial + 2 retries = 3 calls)
             self.assertEqual(result["stop_reason"], "output_truncated")
-            self.assertEqual(model.calls, 2)
+            self.assertEqual(model.calls, 3)
             self.assertTrue((tmp_path / "errors.jsonl").is_file())
             err_content = (tmp_path / "errors.jsonl").read_text(encoding="utf-8")
             self.assertIn("OutputTruncated", err_content)
