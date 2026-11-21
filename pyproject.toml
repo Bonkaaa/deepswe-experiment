@@ -11,6 +11,7 @@ dependencies = [
     "python-dotenv>=1.0,<2",
     "tzdata>=2025.2",
     "PyYAML>=6.0,<7",
+    "mini-swe-agent>=2.4.6,<3.0.0",
 ]
 
 [project.scripts]

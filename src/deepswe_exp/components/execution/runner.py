@@ -189,14 +189,25 @@ def run_next(settings, backend=None, task_id=None, run_id=None, restart=False):
         (out / "instruction.md").write_text(task.instruction, encoding="utf-8")
 
         with create_agent(backend, task, prepared, variant / "snapshot", manifest) as box:
-            agent_result = asyncio.run(run_agent(
-                settings=settings,
-                instruction=task.instruction,
-                box=box,
-                output_dir=out,
-                ledger=ledger,
-                protocol_hash=run["protocol_hash"],
-            ))
+            if getattr(settings, "harness", "mini-swe-agent") == "mini-swe-agent":
+                from ..agent.mini_swe_runner import run_mini_swe_agent
+                agent_result = run_mini_swe_agent(
+                    settings=settings,
+                    instruction=task.instruction,
+                    box=box,
+                    output_dir=out,
+                    ledger=ledger,
+                    protocol_hash=run["protocol_hash"],
+                )
+            else:
+                agent_result = asyncio.run(run_agent(
+                    settings=settings,
+                    instruction=task.instruction,
+                    box=box,
+                    output_dir=out,
+                    ledger=ledger,
+                    protocol_hash=run["protocol_hash"],
+                ))
             export_app(box, out / "final")
         collect_diff(variant / "snapshot", out / "final", out, manifest["product_paths"])
         write_json(out / "agent_result.json", agent_result)

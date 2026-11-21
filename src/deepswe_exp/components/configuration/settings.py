@@ -50,6 +50,7 @@ class Settings:
     ollama_models_dir: Path | None = None
     ollama_state_dir: Path | None = None
     ollama_options: dict = field(default_factory=dict)
+    harness: str = "mini-swe-agent"
 
     @property
     def input_budget(self) -> int:
@@ -158,6 +159,9 @@ def _validate_config(config: object) -> dict:
     options = config.get("task_options", {})
     if not isinstance(options, dict) or any(task not in config["tasks"] for task in options):
         raise ValueError("task_options must be a mapping keyed by configured task IDs")
+    harness = config.get("harness", "mini-swe-agent")
+    if not isinstance(harness, str) or harness not in ("mini-swe-agent", "custom"):
+        raise ValueError(f"Invalid harness: {harness}; must be 'mini-swe-agent' or 'custom'")
     return config
 
 
@@ -192,7 +196,10 @@ def load_settings(
     config_path: str | Path | None = None,
     profile: str | None = None,
     study_id: str | None = None,
+    harness: str | None = None,
 ) -> Settings:
+    if harness is not None and harness not in ("mini-swe-agent", "custom"):
+        raise ValueError(f"Invalid harness: {harness}; must be 'mini-swe-agent' or 'custom'")
     root = find_root(Path(config_path).expanduser().resolve().parent if config_path else None)
     env = dotenv_values(root / ".env")
 
@@ -270,6 +277,7 @@ def load_settings(
             ollama_models_dir=_resolve_profile_path(root, ollama.get("models_dir")),
             ollama_state_dir=_resolve_profile_path(root, ollama.get("state_dir")),
             ollama_options=ollama,
+            harness=harness or study_config.get("harness", "mini-swe-agent"),
         )
 
     if config_path is None:
@@ -303,4 +311,5 @@ def load_settings(
         ollama_base_url=base_url,
         ollama_num_ctx=num_ctx,
         ollama_context_safety_tokens=safety_tokens,
+        harness=harness or config.get("harness", "mini-swe-agent"),
     )
