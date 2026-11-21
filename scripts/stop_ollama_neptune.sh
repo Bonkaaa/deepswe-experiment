@@ -35,5 +35,5 @@ for _ in $(seq 1 15); do
   sleep 1
 done
 
-printf 'Ollama did not exit after SIGTERM; left it running. Inspect .local/ollama/ollama.log.\n' >&2
+printf 'Ollama did not exit after SIGTERM; left it running. Inspect .local/ollama-neptune/ollama.log.\n' >&2
 exit 2

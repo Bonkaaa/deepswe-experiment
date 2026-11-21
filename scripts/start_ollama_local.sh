@@ -72,7 +72,9 @@ if [[ "$RESTART" = true ]] && curl -s -f "${BASE_URL}/api/tags" >/dev/null 2>&1;
 fi
 
 verify_model() {
-  if ! curl -s "${BASE_URL}/api/tags" | grep -q "\"${MODEL}\""; then
+  local tags_json
+  tags_json="$(curl -s "${BASE_URL}/api/tags" || true)"
+  if ! grep -q "\"${MODEL}\"" <<<"$tags_json"; then
     echo "[start_ollama] WARNING: Model '${MODEL}' not found in '${BASE_URL}/api/tags'. Please ensure the model is pulled." >&2
   else
     echo "[start_ollama] Model '${MODEL}' verified in Ollama repository."

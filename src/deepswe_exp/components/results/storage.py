@@ -113,6 +113,8 @@ def protocol(settings, prepared, task_ids=None, model_metadata=None):
     if getattr(settings, "profile_id", None) is not None or getattr(settings, "model_provider", "google") != "google":
         payload['model_provider'] = getattr(settings, "model_provider", "google")
         payload['profile_id'] = getattr(settings, "profile_id", None)
+    if getattr(settings, "harness", "mini-swe-agent") != "mini-swe-agent":
+        payload["harness"] = getattr(settings, "harness", "mini-swe-agent")
     if getattr(settings, "model_provider", "google") == "ollama":
         payload["ollama"] = {
             "base_url": settings.ollama_base_url,

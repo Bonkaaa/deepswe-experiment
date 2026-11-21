@@ -82,7 +82,7 @@ def _record(settings, run: dict) -> dict:
         input_tokens += int(item.get("input_tokens", 0) or 0)
         output_tokens += int(item.get("output_tokens", 0) or 0)
     error = _read_optional(folder / "error.json")
-    detail = evaluation.get("detail") or error.get("detail") or ""
+    detail = evaluation.get("detail") or error.get("detail") or agent.get("error_detail") or ""
     return {
         "task_id": run.get("task_id"), "task_category": prepared.get("category", ""),
         "experiment_role": prepared.get("role", "experiment"),

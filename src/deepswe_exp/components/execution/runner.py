@@ -188,12 +188,17 @@ def run_next(settings, backend=None, task_id=None, run_id=None, restart=False):
         harness_name = getattr(settings, "harness", "mini-swe-agent")
         if harness_name == "mini-swe-agent":
             try:
+                import os
+                os.environ.setdefault("MSWEA_SILENT_STARTUP", "1")
                 import yaml
                 from minisweagent import package_dir
                 mini_cfg = package_dir / "config" / "mini.yaml"
                 if not mini_cfg.is_file():
                     mini_cfg = package_dir / "config" / "default.yaml"
-                prompt_content = yaml.safe_load(mini_cfg.read_text(encoding="utf-8")).get("agent", {}).get("system_template", "")
+                agent_cfg = yaml.safe_load(mini_cfg.read_text(encoding="utf-8")).get("agent", {})
+                sys_tmpl = agent_cfg.get("system_template", "").strip()
+                inst_tmpl = agent_cfg.get("instance_template", "").strip()
+                prompt_content = f"{sys_tmpl}\n\n{inst_tmpl}".strip()
             except Exception:
                 prompt_content = ""
             (out / "system_prompt.md").write_text(prompt_content or settings.prompt_path.read_text(encoding="utf-8"), encoding="utf-8")
@@ -221,9 +226,9 @@ def run_next(settings, backend=None, task_id=None, run_id=None, restart=False):
                     ledger=ledger,
                     protocol_hash=run["protocol_hash"],
                 ))
+            write_json(out / "agent_result.json", agent_result)
             export_app(box, out / "final")
         collect_diff(variant / "snapshot", out / "final", out, manifest["product_paths"])
-        write_json(out / "agent_result.json", agent_result)
 
         if agent_result["stop_reason"] in (
             "provider_error", "quota_interrupted", "docker_error", "internal_error", "format_error",

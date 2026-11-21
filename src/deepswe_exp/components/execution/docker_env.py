@@ -38,6 +38,7 @@ class Sandbox:
         limits=(metadata or {}).get('environment',{})
         self.container=client.containers.run(image,['sleep','infinity'],detach=True,
             network_disabled=True,working_dir='/app',user='root',
+            environment={'PAGER':'cat','MANPAGER':'cat','LESS':'-R','PIP_PROGRESS_BAR':'off','TQDM_DISABLE':'1'},
             nano_cpus=int(limits.get('cpus',2)*1e9),mem_limit=f"{limits.get('memory_mb',8192)}m",
             cap_drop=['ALL'],cap_add=['CHOWN','DAC_OVERRIDE','FOWNER','SETUID','SETGID'],
             security_opt=['no-new-privileges'],init=True)
@@ -50,7 +51,7 @@ class Sandbox:
         def worker():
             try: result['value']=self.container.exec_run(['bash','-lc',wrapper],user=self.user,workdir='/app')
             except Exception as e: result['error']=e
-        thread=threading.Thread(target=worker,daemon=True); thread.start(); thread.join(timeout+1)
+        thread=threading.Thread(target=worker,daemon=True); thread.start(); thread.join(timeout+10)
         if thread.is_alive():
             self.container.kill()
             raise DockerFailure('Command timeout: container killed')

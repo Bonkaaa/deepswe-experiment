@@ -500,6 +500,267 @@ class TestSettingsAndRunnerDispatch(unittest.TestCase):
         mock_custom_runner.assert_called_once()
         self.assertEqual(run["status"], "scored")
 
+    def test_model_loads_mini_yaml_templates_and_max_tokens(self):
+        import litellm
+        settings = DummySettings(
+            model_provider="ollama",
+            model="qwen3.6:35b-a3b-coding",
+            ollama_base_url="http://127.0.0.1:11434",
+            ollama_num_ctx=32768,
+            ollama_options={"temperature": 0.0},
+            budget={"max_output_tokens": 8192, "wall_time_seconds": 1800},
+        )
+        model = build_mini_swe_model(settings)
+        self.assertIn("COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT", model.config.format_error_template)
+        self.assertIn("finish_reason", model.config.format_error_template)
+        self.assertIn("output_head", model.config.observation_template)
+        self.assertEqual(model.config.model_kwargs.get("max_tokens"), 8192)
+        self.assertTrue(model.config.model_kwargs.get("drop_params"))
+        self.assertIsNotNone(model.config.model_kwargs.get("timeout"))
+        self.assertIn(litellm.exceptions.BadRequestError, model.abort_exceptions)
+
+    def test_env_truncates_long_output_and_handles_timeout_and_cwd(self):
+        box = MagicMock()
+        box.execute.return_value = (0, "A" * 500 + "secret-xyz" + "B" * 500)
+        env = SandboxEnvironment(
+            box=box,
+            cwd="/app",
+            timeout=60,
+            max_output_chars=200,
+            redact_fn=lambda s: s.replace("secret-xyz", "[REDACTED]"),
+        )
+        res = env.execute({"command": "cat bigfile"}, cwd="/app/subdir")
+        box.execute.assert_called_once_with("cd /app/subdir && cat bigfile", timeout=60)
+        self.assertLessEqual(len(res["output"]), 200)
+        self.assertIn("[... TRUNCATED", res["output"])
+        self.assertNotIn("secret-xyz", res["output"])
+        self.assertEqual(len(env.commands), 1)
+        self.assertEqual(env.commands[0]["command"], "cat bigfile")
+        self.assertEqual(env.commands[0]["exit_code"], 0)
+
+        # Timeout rc=124 sets exception_info
+        box.execute.return_value = (124, "partial output")
+        res_timeout = env.execute({"command": "sleep 999"})
+        self.assertEqual(res_timeout["returncode"], 124)
+        self.assertIn("timed out after 60 seconds", res_timeout["exception_info"])
+
+    def test_runner_extracts_token_usage_and_writes_commands_jsonl(self):
+        import json
+        import tempfile
+        from pathlib import Path
+        from deepswe_exp.components.agent.mini_swe_runner import _RedactingAgent
+
+        settings = DummySettings(
+            model_provider="google",
+            model="gemini-2.5-flash",
+            api_key="secret-api-key",
+            ollama_num_ctx=32768,
+            input_budget=24000,
+            budget={"tool_timeout_seconds": 30, "max_model_requests": 15, "max_output_tokens": 4096, "max_tool_output_chars": 4000},
+            redact=lambda s: str(s).replace("secret-api-key", "[REDACTED]"),
+        )
+        box = MagicMock()
+        box.execute.side_effect = [
+            (0, "file1.py"),
+            (0, "COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT\ndone"),
+        ]
+        ledger = MagicMock()
+
+        def fake_run(self_agent, instruction):
+            self_agent.n_calls = 2
+            self_agent.env.execute({"command": "ls"})
+            self_agent.messages = [
+                {
+                    "role": "assistant",
+                    "content": "Listing files",
+                    "extra": {"response": {"usage": {"prompt_tokens": 100, "completion_tokens": 25, "total_tokens": 125}}},
+                },
+                {
+                    "role": "assistant",
+                    "content": "Submitting",
+                    "extra": {"response": {"usage": {"prompt_tokens": 150, "completion_tokens": 35, "total_tokens": 185}}},
+                },
+            ]
+            # Verify incremental save redacts api_key immediately
+            self_agent.save(self_agent.config.output_path)
+            return {"exit_status": "Submitted", "submission": "done"}
+
+        with tempfile.TemporaryDirectory() as td:
+            out_dir = Path(td)
+            with patch.object(_RedactingAgent, "run", fake_run):
+                result = run_mini_swe_agent(
+                    settings=settings,
+                    instruction="Fix bug",
+                    box=box,
+                    output_dir=out_dir,
+                    ledger=ledger,
+                    protocol_hash="p1",
+                )
+
+            self.assertEqual(result["stop_reason"], "submitted")
+            self.assertEqual(len(result["usage"]), 2)
+            self.assertEqual(result["usage"][0]["input_tokens"], 100)
+            self.assertEqual(result["usage"][0]["output_tokens"], 25)
+            self.assertEqual(result["usage"][1]["input_tokens"], 150)
+            self.assertEqual(result["usage"][1]["output_tokens"], 35)
+            self.assertEqual(ledger.usage.call_count, 2)
+            self.assertEqual(len(result["commands"]), 1)
+            self.assertTrue((out_dir / "commands.jsonl").is_file())
+            traj_text = (out_dir / "trajectory.json").read_text(encoding="utf-8")
+            self.assertNotIn("secret-api-key", traj_text)
+            self.assertIn("[REDACTED]", traj_text)
+
+    def test_runner_reclassifies_repeated_format_error_and_exceptions(self):
+        import tempfile
+        from pathlib import Path
+        from litellm.exceptions import BadRequestError
+        from minisweagent.exceptions import TimeExceeded
+        from deepswe_exp.components.execution.docker_env import DockerFailure
+
+        settings = DummySettings(
+            model_provider="ollama",
+            model="qwen3.6:35b-a3b-coding",
+            ollama_base_url="http://127.0.0.1:11434",
+            ollama_num_ctx=32768,
+            input_budget=24576,
+            budget={"tool_timeout_seconds": 30, "max_model_requests": 15, "max_output_tokens": 4096, "max_tool_output_chars": 4000},
+            redact=lambda s: str(s),
+        )
+        box = MagicMock()
+
+        # 1. RepeatedFormatError due to context overflow (total_tokens near ollama_num_ctx)
+        with tempfile.TemporaryDirectory() as td, \
+             patch("deepswe_exp.components.agent.mini_swe_runner.DefaultAgent") as mock_cls:
+            mock_agent = MagicMock()
+            mock_agent.run.return_value = {"exit_status": "RepeatedFormatError", "submission": ""}
+            mock_agent.messages = [{
+                "role": "user",
+                "extra": {
+                    "response": {
+                        "choices": [{"finish_reason": "length"}],
+                        "usage": {"prompt_tokens": 32750, "completion_tokens": 18, "total_tokens": 32768},
+                    }
+                },
+            }]
+            mock_cls.return_value = mock_agent
+            res = run_mini_swe_agent(settings=settings, instruction="Fix", box=box, output_dir=Path(td))
+            self.assertEqual(res["stop_reason"], "context_overflow")
+
+        # 2. RepeatedFormatError due to output_truncated (completion_tokens hit max_output_tokens)
+        with tempfile.TemporaryDirectory() as td, \
+             patch("deepswe_exp.components.agent.mini_swe_runner.DefaultAgent") as mock_cls:
+            mock_agent = MagicMock()
+            mock_agent.run.return_value = {"exit_status": "RepeatedFormatError", "submission": ""}
+            mock_agent.messages = [{
+                "role": "user",
+                "extra": {
+                    "response": {
+                        "choices": [{"finish_reason": "length"}],
+                        "usage": {"prompt_tokens": 2000, "completion_tokens": 4096, "total_tokens": 6096},
+                    }
+                },
+            }]
+            mock_cls.return_value = mock_agent
+            res = run_mini_swe_agent(settings=settings, instruction="Fix", box=box, output_dir=Path(td))
+            self.assertEqual(res["stop_reason"], "output_truncated")
+
+        # 3. BadRequestError("context length exceeded") -> context_overflow
+        with tempfile.TemporaryDirectory() as td, \
+             patch("deepswe_exp.components.agent.mini_swe_runner.DefaultAgent") as mock_cls:
+            mock_agent = MagicMock()
+            mock_agent.run.side_effect = BadRequestError("OllamaError: context length exceeded", model="qwen", llm_provider="ollama")
+            mock_cls.return_value = mock_agent
+            res = run_mini_swe_agent(settings=settings, instruction="Fix", box=box, output_dir=Path(td))
+            self.assertEqual(res["stop_reason"], "context_overflow")
+
+        # 4. DockerFailure -> docker_error
+        with tempfile.TemporaryDirectory() as td, \
+             patch("deepswe_exp.components.agent.mini_swe_runner.DefaultAgent") as mock_cls:
+            mock_agent = MagicMock()
+            mock_agent.run.side_effect = DockerFailure("Command timeout: container killed")
+            mock_cls.return_value = mock_agent
+            res = run_mini_swe_agent(settings=settings, instruction="Fix", box=box, output_dir=Path(td))
+            self.assertEqual(res["stop_reason"], "docker_error")
+
+        # 5. TimeExceeded exception -> time_budget (not shadowed by LimitsExceeded)
+        with tempfile.TemporaryDirectory() as td, \
+             patch("deepswe_exp.components.agent.mini_swe_runner.DefaultAgent") as mock_cls:
+            mock_agent = MagicMock()
+            mock_agent.run.side_effect = TimeExceeded()
+            mock_cls.return_value = mock_agent
+            res = run_mini_swe_agent(settings=settings, instruction="Fix", box=box, output_dir=Path(td))
+            self.assertEqual(res["stop_reason"], "time_budget")
+
+    def test_check_model_connection_with_mini_swe_harness_and_report_error_detail(self):
+        import tempfile
+        from pathlib import Path
+        from deepswe_exp.components.agent.connection import check_model_connection
+        from deepswe_exp.components.results.report import _record
+        from deepswe_exp.components.results.storage import write_json, protocol
+
+        with tempfile.TemporaryDirectory() as td:
+            out_root = Path(td) / "runs"
+            settings = DummySettings(
+                harness="mini-swe-agent",
+                model_provider="ollama",
+                model="qwen3.6:35b-a3b-coding",
+                ollama_base_url="http://127.0.0.1:11434",
+                ollama_num_ctx=32768,
+                ollama_options={},
+                output_root=out_root,
+                config={"study_id": "test"},
+                budget={"max_output_tokens": 4096, "wall_time_seconds": 600},
+                redact=lambda s: str(s),
+            )
+            fake_litellm_model = MagicMock()
+            fake_litellm_model.query.side_effect = [
+                {
+                    "role": "assistant",
+                    "content": "Running echo OK",
+                    "tool_calls": [{"id": "call_1", "type": "function", "function": {"name": "bash", "arguments": '{"command": "echo OK"}'}}],
+                    "extra": {
+                        "actions": [{"command": "echo OK", "tool_call_id": "call_1"}],
+                        "response": {"usage": {"prompt_tokens": 50, "completion_tokens": 10, "total_tokens": 60}},
+                    },
+                },
+                {
+                    "role": "assistant",
+                    "content": "Confirmed",
+                    "extra": {
+                        "actions": [{"command": "echo COMPLETE_TASK_AND_SUBMIT_FINAL_OUTPUT", "tool_call_id": "call_2"}],
+                        "response": {"usage": {"prompt_tokens": 70, "completion_tokens": 12, "total_tokens": 82}},
+                    },
+                },
+            ]
+            fake_litellm_model.format_observation_messages.return_value = [
+                {"role": "tool", "tool_call_id": "call_1", "content": '{"returncode": 0, "output": "OK"}'}
+            ]
+
+            with patch("deepswe_exp.components.agent.connection.fetch_ollama_metadata", return_value={"version": "0.6.0", "digest": "sha256:123"}), \
+                 patch("deepswe_exp.components.agent.connection.build_mini_swe_model", return_value=fake_litellm_model):
+                chk = check_model_connection(settings)
+                self.assertEqual(chk["status"], "success")
+                self.assertTrue(chk["tool_calling_verified"])
+                self.assertEqual(chk["request_count"], 2)
+
+            # Test report._record includes agent_result["error_detail"]
+            run_row = {
+                "task_id": "t1", "branch": "100", "seed": 42, "attempt_id": "att1",
+                "run_id": "r1", "group_valid": False, "status": "interrupted",
+            }
+            attempt_dir = out_root / "t1" / "100" / "42" / "att1"
+            write_json(attempt_dir / "agent_result.json", {
+                "stop_reason": "context_overflow",
+                "model_requests": 12,
+                "elapsed_seconds": 45.2,
+                "usage": [{"input_tokens": 30000, "output_tokens": 2000}],
+                "error_detail": "Prompt exceeded max context length 32768",
+            })
+            rec = _record(settings, run_row)
+            self.assertEqual(rec["input_tokens"], 30000)
+            self.assertEqual(rec["output_tokens"], 2000)
+            self.assertIn("Prompt exceeded max context length 32768", rec["technical_detail"])
+
 
 if __name__ == "__main__":
     unittest.main()
