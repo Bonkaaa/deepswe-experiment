@@ -761,6 +761,50 @@ class TestSettingsAndRunnerDispatch(unittest.TestCase):
             self.assertEqual(rec["output_tokens"], 2000)
             self.assertIn("Prompt exceeded max context length 32768", rec["technical_detail"])
 
+    def test_parse_result_scores_collection_failure_missing_from_report_as_fail_test(self):
+        import json
+        import tempfile
+        from pathlib import Path
+        from deepswe_exp.components.evaluation.verifier import parse_result
+
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "reward.json").write_text(
+                json.dumps({
+                    "reward": 0,
+                    "f2p_total": 44,
+                    "f2p_passed": 0,
+                    "p2p_total": 2738,
+                    "p2p_passed": 0,
+                    "f2p": 0.0,
+                    "p2p": 0.0,
+                    "partial": 0.0,
+                }),
+                encoding="utf-8",
+            )
+            (root / "ctrf.json").write_text(
+                json.dumps({
+                    "results": {
+                        "tests": [
+                            {
+                                "name": "[p2p] tests.unit.test_example",
+                                "status": "failed",
+                                "message": "ValueError: Cannot create schema because overlay contains omitted values",
+                            },
+                            {
+                                "name": "[f2p] tests.integration.morphing.test_aliases.test_alias_style",
+                                "status": "failed",
+                                "message": "missing from report (test did not run or produced no result — see raw output)",
+                            },
+                        ]
+                    }
+                }),
+                encoding="utf-8",
+            )
+            res = parse_result(root, rc=0, timed_out=False)
+            self.assertEqual(res["status"], "fail_test")
+            self.assertEqual(res["reward"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()

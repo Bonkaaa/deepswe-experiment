@@ -27,8 +27,6 @@ def parse_result(folder,rc,timed_out=False)->EvaluationResult:
         return {'status':'infrastructure_error','reward':None,'benchmark':reward,'detail':'Invalid ctrf.json'}
     if not isinstance(rows,list) or not rows:
         return {'status':'infrastructure_error','reward':None,'benchmark':reward,'detail':'Empty or invalid test report'}
-    missing=any('missing from report' in str(r.get('message','')).lower() for r in rows)
-    if missing: return {'status':'infrastructure_error','reward':None,'benchmark':reward,'detail':'Tests missing from framework reports'}
     if reward.get('reward') not in (0,1): return {'status':'infrastructure_error','reward':None,'benchmark':reward}
     return {'status':'pass' if reward['reward']==1 else 'fail_test','reward':reward['reward'],'benchmark':reward}
 
@@ -107,10 +105,10 @@ def evaluate_supplied_tests(backend,task,image,snapshot,manifest,patch,output,ti
                 total=failed=skipped=0
             (output/'stdout.txt').write_text(stdout,encoding='utf-8')
             if timed_out: status='timeout'
+            elif rc!=0 and failed>0: status='fail_test'
             elif total!=len(node_ids): status='infrastructure_error'
             elif rc==0 and failed==0 and skipped==0: status='pass'
             elif rc==0 and failed==0 and skipped>0: status='partial'
-            elif rc!=0 and failed>0: status='fail_test'
             else: status='infrastructure_error'
             result={'schema_version':1,'protocol_hash':protocol_hash,'status':status,'passed':total-failed-skipped,'failed':failed,'skipped':skipped,
                     'total':total,'exit_code':rc}
