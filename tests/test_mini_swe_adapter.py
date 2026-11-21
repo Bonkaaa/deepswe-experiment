@@ -67,6 +67,18 @@ class TestSandboxEnvironment(unittest.TestCase):
         vars_dict = env.get_template_vars()
         self.assertIsInstance(vars_dict, dict)
         self.assertEqual(vars_dict.get("cwd"), "/app")
+        self.assertEqual(vars_dict.get("system"), "Linux")
+        self.assertEqual(vars_dict.get("machine"), "x86_64")
+        self.assertIn("release", vars_dict)
+        self.assertIn("version", vars_dict)
+
+    def test_serialize(self):
+        box = MagicMock()
+        env = SandboxEnvironment(box=box, cwd="/app", timeout=60)
+        serialized = env.serialize()
+        self.assertIsInstance(serialized, dict)
+        self.assertIn("info", serialized)
+        self.assertEqual(serialized["info"]["config"]["environment"]["cwd"], "/app")
 
 
 class TestMiniSweModel(unittest.TestCase):
@@ -200,6 +212,100 @@ class TestMiniSweRunner(unittest.TestCase):
 
             self.assertEqual(result["stop_reason"], "internal_error")
             self.assertEqual(result["error_detail"], "Something crashed")
+
+    @patch("deepswe_exp.components.agent.mini_swe_runner.DefaultAgent")
+    def test_run_return_dict_statuses(self, mock_agent_cls):
+        cases = [
+            ({"exit_status": "Submitted", "submission": "done"}, "submitted", None),
+            ({"exit_status": "LimitsExceeded", "submission": ""}, "request_budget", None),
+            ({"exit_status": "TimeExceeded", "submission": ""}, "time_budget", None),
+            ({"exit_status": "RepeatedFormatError", "submission": ""}, "format_error", None),
+            ({"exit_status": "UnknownStatus", "submission": ""}, "internal_error", "Unexpected agent exit_status"),
+        ]
+        import tempfile
+        from pathlib import Path
+        for return_dict, expected_reason, expected_error_sub in cases:
+            mock_agent = MagicMock()
+            mock_agent.run.return_value = return_dict
+            mock_agent_cls.return_value = mock_agent
+
+            with tempfile.TemporaryDirectory() as td:
+                res = run_mini_swe_agent(
+                    settings=self.settings,
+                    instruction="Test",
+                    box=self.box,
+                    output_dir=Path(td),
+                )
+                self.assertEqual(res["stop_reason"], expected_reason)
+                if expected_error_sub:
+                    self.assertIn(expected_error_sub, res["error_detail"])
+
+    @patch("deepswe_exp.components.agent.mini_swe_runner.DefaultAgent")
+    def test_run_redacts_api_key_in_trajectory_and_error(self, mock_agent_cls):
+        mock_agent = MagicMock()
+        mock_agent.run.side_effect = RuntimeError("Failed with key secret-12345")
+        mock_agent_cls.return_value = mock_agent
+
+        settings = DummySettings(
+            model_provider="google",
+            model="gemini-2.5-flash",
+            api_key="secret-12345",
+            budget={"tool_timeout_seconds": 30, "max_model_requests": 15},
+            redact=lambda s: str(s).replace("secret-12345", "[REDACTED]"),
+        )
+
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as td:
+            out_dir = Path(td)
+            # simulate trajectory saved with secret key
+            def fake_save(p):
+                p.write_text('{"api_key": "secret-12345"}', encoding="utf-8")
+            mock_agent.save.side_effect = fake_save
+
+            res = run_mini_swe_agent(
+                settings=settings,
+                instruction="Test",
+                box=self.box,
+                output_dir=out_dir,
+            )
+
+            self.assertIn("[REDACTED]", res["error_detail"])
+            self.assertNotIn("secret-12345", res["error_detail"])
+
+            saved_traj = (out_dir / "trajectory.json").read_text(encoding="utf-8")
+            self.assertIn("[REDACTED]", saved_traj)
+            self.assertNotIn("secret-12345", saved_traj)
+
+    def test_contract_real_default_agent_rendering_and_serialization(self):
+        """Verify real DefaultAgent with SandboxEnvironment renders Jinja templates and serializes without error."""
+        from minisweagent.agents.default import DefaultAgent
+        import yaml
+        from minisweagent import package_dir
+
+        box = MagicMock()
+        box.execute.return_value = (0, "echo hi")
+        env = SandboxEnvironment(box=box, cwd="/app", timeout=60)
+
+        # Minimal mock model satisfying minisweagent.Model protocol
+        mock_model = MagicMock()
+        mock_model.format_message.side_effect = lambda role, content: {"role": role, "content": content}
+        mock_model.get_template_vars.return_value = {}
+
+        config = yaml.safe_load((package_dir / "config" / "mini.yaml").read_text(encoding="utf-8"))["agent"]
+        config["step_limit"] = 1
+        agent = DefaultAgent(model=mock_model, env=env, **config)
+        agent.extra_template_vars["task"] = "Fix the login bug"
+
+        # Test Jinja rendering of instance template does not fail with 'system' is undefined
+        rendered_instance = agent._render_template(config["instance_template"])
+        self.assertIn("Linux", rendered_instance)
+        self.assertIn("x86_64", rendered_instance)
+
+        # Test agent serialize works without AttributeError on env.serialize
+        serialized = agent.serialize()
+        self.assertIsInstance(serialized, dict)
+        self.assertIn("info", serialized)
 
 
 class TestSettingsAndRunnerDispatch(unittest.TestCase):

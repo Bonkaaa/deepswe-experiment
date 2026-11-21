@@ -185,11 +185,24 @@ def run_next(settings, backend=None, task_id=None, run_id=None, restart=False):
             "budget": settings.budget,
             "started": utc_now(),
         })
-        (out / "system_prompt.md").write_text(settings.prompt_path.read_text(encoding="utf-8"), encoding="utf-8")
+        harness_name = getattr(settings, "harness", "mini-swe-agent")
+        if harness_name == "mini-swe-agent":
+            try:
+                import yaml
+                from minisweagent import package_dir
+                mini_cfg = package_dir / "config" / "mini.yaml"
+                if not mini_cfg.is_file():
+                    mini_cfg = package_dir / "config" / "default.yaml"
+                prompt_content = yaml.safe_load(mini_cfg.read_text(encoding="utf-8")).get("agent", {}).get("system_template", "")
+            except Exception:
+                prompt_content = ""
+            (out / "system_prompt.md").write_text(prompt_content or settings.prompt_path.read_text(encoding="utf-8"), encoding="utf-8")
+        else:
+            (out / "system_prompt.md").write_text(settings.prompt_path.read_text(encoding="utf-8"), encoding="utf-8")
         (out / "instruction.md").write_text(task.instruction, encoding="utf-8")
 
         with create_agent(backend, task, prepared, variant / "snapshot", manifest) as box:
-            if getattr(settings, "harness", "mini-swe-agent") == "mini-swe-agent":
+            if harness_name == "mini-swe-agent":
                 from ..agent.mini_swe_runner import run_mini_swe_agent
                 agent_result = run_mini_swe_agent(
                     settings=settings,

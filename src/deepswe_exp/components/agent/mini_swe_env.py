@@ -29,7 +29,24 @@ class SandboxEnvironment:
         return result
 
     def get_template_vars(self, **kwargs) -> dict[str, Any]:
-        return {"cwd": self.cwd, **kwargs}
+        return {
+            "system": "Linux",
+            "release": "6.1",
+            "version": "1",
+            "machine": "x86_64",
+            "cwd": self.cwd,
+            **kwargs,
+        }
+
+    def serialize(self) -> dict[str, Any]:
+        return {
+            "info": {
+                "config": {
+                    "environment": {"cwd": self.cwd, "timeout": self.timeout},
+                    "environment_type": f"{self.__class__.__module__}.{self.__class__.__name__}",
+                }
+            }
+        }
 
     def _check_finished(self, output: dict[str, Any]) -> None:
         lines = output.get("output", "").lstrip().splitlines(keepends=True)

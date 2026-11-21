@@ -42,6 +42,10 @@ def run_mini_swe_agent(
     if "wall_time_seconds" in settings.budget:
         config["wall_time_limit_seconds"] = settings.budget["wall_time_seconds"]
 
+    # Persist intermediate steps incrementally
+    traj_path = output_dir / "trajectory.json"
+    config["output_path"] = traj_path
+
     agent = DefaultAgent(model=model, env=env, **config)
 
     stop_reason = "internal_error"
@@ -59,7 +63,8 @@ def run_mini_swe_agent(
         elif exit_status == "RepeatedFormatError":
             stop_reason = "format_error"
         else:
-            stop_reason = "submitted"
+            stop_reason = "internal_error"
+            error_detail = f"Unexpected agent exit_status: {exit_status}"
     except Submitted:
         stop_reason = "submitted"
     except LimitsExceeded:
@@ -74,14 +79,18 @@ def run_mini_swe_agent(
             stop_reason = "context_overflow"
         else:
             stop_reason = "internal_error"
-            error_detail = exc_str
+            error_detail = settings.redact(exc_str) if hasattr(settings, "redact") else exc_str
 
     elapsed = time.monotonic() - started
 
-    # Save trajectory to output directory
+    # Save trajectory to output directory and redact sensitive API keys
     if hasattr(agent, "save"):
         try:
-            agent.save(output_dir / "trajectory.json")
+            agent.save(traj_path)
+            if traj_path.is_file():
+                raw_traj = traj_path.read_text(encoding="utf-8")
+                redacted = settings.redact(raw_traj) if hasattr(settings, "redact") else raw_traj
+                traj_path.write_text(redacted, encoding="utf-8")
         except Exception:
             pass
 
