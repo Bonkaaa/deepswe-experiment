@@ -231,8 +231,7 @@ def run_next(settings, backend=None, task_id=None, run_id=None, restart=False):
         collect_diff(variant / "snapshot", out / "final", out, manifest["product_paths"])
 
         if agent_result["stop_reason"] in (
-            "provider_error", "quota_interrupted", "docker_error", "internal_error", "format_error",
-            "context_overflow", "output_truncated", "truncation_unknown"
+            "provider_error", "quota_interrupted", "docker_error", "internal_error"
         ):
             run["status"] = "interrupted"
         else:

@@ -7,8 +7,8 @@ ollama:
   binary: .local/ollama-neptune/runtime/bin/ollama
   models_dir: .local/ollama-neptune/models
   state_dir: .local/ollama-neptune
-  num_ctx: 32768
-  context_safety_tokens: 4096
+  num_ctx: 131072
+  context_safety_tokens: 8192
   temperature: 0.0
   num_parallel: 1
   max_loaded_models: 1

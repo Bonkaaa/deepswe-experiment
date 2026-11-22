@@ -183,7 +183,7 @@ class FakeLedger:
 
 class TruncatedFakeModel:
     """Simulates an Ollama response that gets cut off due to context window length."""
-    def __init__(self, recover_on_retry=False, prompt_eval_count=131050):
+    def __init__(self, recover_on_retry=False, prompt_eval_count=262120):
         self.calls = 0
         self.recover_on_retry = recover_on_retry
         self.prompt_eval_count = prompt_eval_count
@@ -277,10 +277,10 @@ class TestAgentContextIntegration(unittest.TestCase):
     def test_settings_input_budget_calculation(self):
         from deepswe_exp.components.configuration.settings import load_settings
         settings = load_settings(profile="saturn")
-        self.assertEqual(settings.ollama_num_ctx, 131072)
+        self.assertEqual(settings.ollama_num_ctx, 262144)
         self.assertEqual(settings.ollama_context_safety_tokens, 8192)
-        # input_budget = 131072 - 16384 (max_output) - 8192 (safety) = 106496
-        self.assertEqual(settings.input_budget, 106496)
+        # input_budget = 262144 - 16384 (max_output) - 8192 (safety) = 237568
+        self.assertEqual(settings.input_budget, 237568)
 
     def test_settings_override_study_id(self):
         from deepswe_exp.components.configuration.settings import load_settings

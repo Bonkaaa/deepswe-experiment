@@ -34,7 +34,7 @@ class Phase1Phase2Tests(unittest.TestCase):
         self.assertEqual(settings.model, "qwen3.6:35b-a3b-coding")
         self.assertEqual(settings.model_provider, "ollama")
         self.assertEqual(settings.ollama_base_url, "http://127.0.0.1:11434")
-        self.assertEqual(settings.ollama_num_ctx, 131072)
+        self.assertEqual(settings.ollama_num_ctx, 262144)
         self.assertEqual(settings.output_root.name, "pilot-a-saturn-qwen36")
         self.assertTrue(settings.quota_ready)
 
@@ -44,7 +44,7 @@ class Phase1Phase2Tests(unittest.TestCase):
         self.assertEqual(settings.model, "qwen3.8:27b")
         self.assertEqual(settings.model_provider, "ollama")
         self.assertEqual(settings.ollama_base_url, "http://127.0.0.1:11435")
-        self.assertEqual(settings.ollama_num_ctx, 32768)
+        self.assertEqual(settings.ollama_num_ctx, 131072)
         self.assertEqual(settings.output_root.name, "pilot-a-neptune-qwen38")
         self.assertTrue(settings.quota_ready)
 

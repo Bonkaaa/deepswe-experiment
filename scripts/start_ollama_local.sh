@@ -92,6 +92,9 @@ echo "[start_ollama] Starting Ollama server background daemon..."
 export OLLAMA_HOST="${BASE_URL}"
 export OLLAMA_NUM_PARALLEL="${NUM_PARALLEL}"
 export OLLAMA_MAX_LOADED_MODELS="${MAX_LOADED_MODELS}"
+export OLLAMA_FLASH_ATTENTION=1
+export OLLAMA_KV_CACHE_TYPE="q8_0"
+export OLLAMA_SCHED_SPREAD=1
 resolve_gpus() {
   local cfg="${CUDA_VISIBLE_DEVICES_CONFIG:-}"
   local target="${ORIGINAL_CUDA_VISIBLE_DEVICES:-$cfg}"
