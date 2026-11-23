@@ -27,7 +27,8 @@ venv_dir = opts.get("venv_dir", ".local/vllm-neptune/venv")
 hf_home = opts.get("hf_home", ".local/vllm-neptune/hf_cache")
 cuda_dev = opts.get("cuda_visible_devices", "0")
 gpu_util = opts.get("gpu_memory_utilization", 0.90)
-kv_dtype = opts.get("kv_cache_dtype", "fp8")
+kv_dtype = opts.get("kv_cache_dtype", "auto")
+max_num_seqs = opts.get("max_num_seqs", 16)
 tool_parser = opts.get("tool_call_parser", "qwen3_coder")
 reason_parser = opts.get("reasoning_parser", "qwen3")
 print(f"MODEL={shlex.quote(str(s.model))}")
@@ -39,6 +40,7 @@ print(f"CUDA_CFG={shlex.quote(str(cuda_dev))}")
 print(f"MAX_MODEL_LEN={shlex.quote(str(s.ollama_num_ctx))}")
 print(f"GPU_MEM_UTIL={shlex.quote(str(gpu_util))}")
 print(f"KV_CACHE_DTYPE={shlex.quote(str(kv_dtype))}")
+print(f"MAX_NUM_SEQS={shlex.quote(str(max_num_seqs))}")
 print(f"TOOL_PARSER={shlex.quote(str(tool_parser))}")
 print(f"REASONING_PARSER={shlex.quote(str(reason_parser))}")
 ')"
@@ -99,6 +101,7 @@ nohup "${VLLM_BIN}" serve "${MODEL}" \
   --port "${PORT}" \
   --tensor-parallel-size 1 \
   --max-model-len "${MAX_MODEL_LEN}" \
+  --max-num-seqs "${MAX_NUM_SEQS}" \
   --gpu-memory-utilization "${GPU_MEM_UTIL}" \
   --kv-cache-dtype "${KV_CACHE_DTYPE}" \
   --enable-chunked-prefill \

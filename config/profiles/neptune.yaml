@@ -13,6 +13,7 @@ vllm:
   context_safety_tokens: 16384
   temperature: 0.0
   gpu_memory_utilization: 0.90
-  kv_cache_dtype: fp8
+  kv_cache_dtype: auto
+  max_num_seqs: 16
   tool_call_parser: qwen3_coder
   reasoning_parser: qwen3
