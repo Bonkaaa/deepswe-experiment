@@ -79,8 +79,10 @@ fi
 export CUDA_VISIBLE_DEVICES="${ORIGINAL_CUDA_VISIBLE_DEVICES:-$CUDA_CFG}"
 export HF_HOME="${HF_HOME_CFG}"
 
-# Auto-enable local cuda-compat if present (for driver 535 H100 hosts)
+# Auto-enable local cuda-compat if present (for driver 535 H100 hosts; prefer CUDA 13.0 compat for torch cu130)
 for compat_dir in \
+  "${STATE_DIR}/cuda-compat-13/usr/local/cuda-13.0/compat" \
+  "${STATE_DIR}/cuda-compat-13/usr/local/cuda/compat" \
   "${STATE_DIR}/cuda-compat/usr/local/cuda-12.8/compat" \
   "${REPO_ROOT}/.local/ollama-neptune/cuda-compat/usr/local/cuda-12.8/compat" \
   "${STATE_DIR}/cuda-compat"; do
