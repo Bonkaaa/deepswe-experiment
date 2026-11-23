@@ -8,6 +8,7 @@ ollama:
   models_dir: .local/ollama/models
   state_dir: .local/ollama
   cuda_visible_devices: "auto"
+  num_gpus: 2
   num_ctx: 262144
   context_safety_tokens: 8192
   temperature: 0.0

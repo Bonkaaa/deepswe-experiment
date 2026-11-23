@@ -41,6 +41,7 @@ model = str(s.model)
 num_parallel = str(s.ollama_options.get("num_parallel", 1))
 max_loaded_models = str(s.ollama_options.get("max_loaded_models", 1))
 cuda_visible_devices = str(s.ollama_options.get("cuda_visible_devices", ""))
+num_gpus = str(s.ollama_options.get("num_gpus", 2 if profile == "saturn" else 1))
 print(f"BASE_URL={shlex.quote(base_url)}")
 print(f"MODELS_DIR={shlex.quote(models_dir)}")
 print(f"STATE_DIR={shlex.quote(state_dir)}")
@@ -49,6 +50,7 @@ print(f"MODEL={shlex.quote(model)}")
 print(f"NUM_PARALLEL={shlex.quote(num_parallel)}")
 print(f"MAX_LOADED_MODELS={shlex.quote(max_loaded_models)}")
 print(f"CUDA_VISIBLE_DEVICES_CONFIG={shlex.quote(cuda_visible_devices)}")
+print(f"NUM_GPUS={shlex.quote(num_gpus)}")
 ' "$PROFILE")"
 
 # Resolve STATE_DIR to absolute path if relative
@@ -94,10 +96,13 @@ export OLLAMA_NUM_PARALLEL="${NUM_PARALLEL}"
 export OLLAMA_MAX_LOADED_MODELS="${MAX_LOADED_MODELS}"
 export OLLAMA_FLASH_ATTENTION=1
 export OLLAMA_KV_CACHE_TYPE="q8_0"
-export OLLAMA_SCHED_SPREAD=1
+if [[ "${NUM_GPUS:-1}" -gt 1 ]]; then
+  export OLLAMA_SCHED_SPREAD=1
+fi
 resolve_gpus() {
   local cfg="${CUDA_VISIBLE_DEVICES_CONFIG:-}"
   local target="${ORIGINAL_CUDA_VISIBLE_DEVICES:-$cfg}"
+  local gpu_count="${NUM_GPUS:-1}"
 
   if [[ -z "$target" ]]; then
     return 0
@@ -111,16 +116,16 @@ resolve_gpus() {
     return 0
   fi
 
-  # Auto mode: dynamically select top 2 GPUs with most free VRAM
+  # Auto mode: dynamically select top N GPUs with most free VRAM (1 for Neptune, 2 for Saturn)
   if [[ "$target" == "auto" ]]; then
     local auto_selected
     auto_selected="$(nvidia-smi --query-gpu=index,memory.free --format=csv,noheader,nounits 2>/dev/null | \
       sort -t',' -k2 -nr | \
-      head -n 2 | \
+      head -n "${gpu_count}" | \
       cut -d',' -f1 | \
       tr '\n' ',' | sed 's/,$//')"
     if [[ -n "$auto_selected" ]]; then
-      echo "[start_ollama] Auto-detected idle GPUs with most free VRAM: CUDA_VISIBLE_DEVICES=${auto_selected}"
+      echo "[start_ollama] Auto-detected ${gpu_count} idle GPU(s) with most free VRAM: CUDA_VISIBLE_DEVICES=${auto_selected}"
       export CUDA_VISIBLE_DEVICES="${auto_selected}"
     fi
     return 0

@@ -87,6 +87,15 @@ if [[ -z "$server_pid" ]]; then
     exit 2
   fi
   printf 'Starting Neptune Ollama; runtime, model files, and log stay under .local/ollama-neptune/.\n'
+  if [[ -z "${CUDA_VISIBLE_DEVICES:-}" ]]; then
+    best_gpu="$(nvidia-smi --query-gpu=index,memory.free --format=csv,noheader,nounits 2>/dev/null | sort -t',' -k2 -nr | head -n 1 | cut -d',' -f1 | tr -d ' ')"
+    if [[ -n "$best_gpu" ]]; then
+      export CUDA_VISIBLE_DEVICES="$best_gpu"
+      printf 'Selected 1 idle H100 GPU with most free VRAM: CUDA_VISIBLE_DEVICES=%s\n' "$CUDA_VISIBLE_DEVICES"
+    fi
+  fi
+  export OLLAMA_FLASH_ATTENTION=1
+  export OLLAMA_KV_CACHE_TYPE="q8_0"
   nohup "$OLLAMA_BIN" serve >>"$LOG_FILE" 2>&1 </dev/null &
   server_pid="$!"
   printf '%s\n' "$server_pid" >"$PID_FILE"
