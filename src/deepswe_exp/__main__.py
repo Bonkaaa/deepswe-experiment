@@ -44,7 +44,7 @@ def _doctor(settings) -> int:
     if getattr(settings, "profile_id", None):
         checks.append(_print_check("Profile", True, settings.profile_id))
     provider = getattr(settings, "model_provider", "google")
-    checks.append(_print_check("Provider", provider in ("google", "ollama"), provider))
+    checks.append(_print_check("Provider", provider in ("google", "ollama", "vllm"), provider))
     checks.append(_print_check("MODEL", bool(settings.model), settings.model or "not set in configuration"))
 
     if provider == "google":
@@ -71,6 +71,21 @@ def _doctor(settings) -> int:
         else:
             model_detail = "server not responding"
         checks.append(_print_check("Ollama Model Installed", model_installed, model_detail))
+    elif provider == "vllm":
+        checks.append(_print_check("vLLM Base URL", bool(settings.ollama_base_url), settings.ollama_base_url))
+        checks.append(_print_check("vLLM Context", bool(settings.ollama_num_ctx), str(settings.ollama_num_ctx)))
+        from .components.results.storage import fetch_vllm_metadata
+        meta = fetch_vllm_metadata(settings.ollama_base_url, settings.model, timeout=1.5)
+        vllm_ok = bool(meta.get("reachable"))
+        checks.append(_print_check("vLLM Server Endpoint", vllm_ok, "reachable" if vllm_ok else "server not responding"))
+        model_served = bool(meta.get("model_available"))
+        if model_served:
+            model_detail = f"available (max_model_len={meta.get('max_model_len')})"
+        elif vllm_ok:
+            model_detail = f"model '{settings.model}' not found in /v1/models (served: {meta.get('models')})"
+        else:
+            model_detail = "server not responding"
+        checks.append(_print_check("vLLM Model Served", model_served, model_detail))
 
     checks.append(_print_check("System prompt", settings.prompt_path.is_file() and bool(settings.prompt_path.read_text(encoding="utf-8").strip()), str(settings.prompt_path)))
     for task_id in settings.task_ids:

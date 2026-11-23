@@ -10,7 +10,7 @@ os.environ.setdefault("MSWEA_SILENT_STARTUP", "1")
 from langchain_core.messages import HumanMessage, ToolMessage
 from minisweagent.exceptions import FormatError
 
-from ..results.storage import append_event, fetch_ollama_metadata, write_json, utc_now
+from ..results.storage import append_event, fetch_ollama_metadata, fetch_vllm_metadata, write_json, utc_now
 from .agent import build_model
 from .mini_swe_model import build_mini_swe_model
 
@@ -20,11 +20,11 @@ def check_model_connection(settings, timeout_seconds: int = 45, model=None) -> d
     provider = getattr(settings, "model_provider", "google")
     if provider == "google" and (not settings.model or not settings.api_key):
         raise ValueError("MODEL and GEMINI_API_KEY are required for check-model")
-    elif provider == "ollama" and not settings.model:
+    elif provider in ("ollama", "vllm") and not settings.model:
         raise ValueError("MODEL is required for check-model")
 
-    # For local providers (e.g. Ollama cold loading weights from disk), allow up to 300s (5 mins)
-    if provider == "ollama" and timeout_seconds == 45:
+    # For local providers (e.g. Ollama/vLLM cold loading weights from disk), allow up to 300s (5 mins)
+    if provider in ("ollama", "vllm") and timeout_seconds == 45:
         timeout_seconds = 300
 
     harness = getattr(settings, "harness", "mini-swe-agent")
@@ -43,6 +43,9 @@ def check_model_connection(settings, timeout_seconds: int = 45, model=None) -> d
     if provider == "ollama":
         meta = fetch_ollama_metadata(settings.ollama_base_url, settings.model)
         result["ollama_metadata"] = meta
+    elif provider == "vllm":
+        meta = fetch_vllm_metadata(settings.ollama_base_url, settings.model)
+        result["vllm_metadata"] = meta
 
     try:
         project = settings.config.get("quota_project") or "default"

@@ -41,9 +41,9 @@ class Phase1Phase2Tests(unittest.TestCase):
     def test_load_profile_neptune(self):
         settings = load_settings(profile="neptune")
         self.assertEqual(settings.profile_id, "neptune")
-        self.assertEqual(settings.model, "qwen3.8:27b")
-        self.assertEqual(settings.model_provider, "ollama")
-        self.assertEqual(settings.ollama_base_url, "http://127.0.0.1:11435")
+        self.assertEqual(settings.model, "Qwen/Qwen3.8-27B-FP8")
+        self.assertEqual(settings.model_provider, "vllm")
+        self.assertEqual(settings.ollama_base_url, "http://127.0.0.1:11435/v1")
         self.assertEqual(settings.ollama_num_ctx, 262144)
         self.assertEqual(settings.output_root.name, "pilot-a-neptune-qwen38")
         self.assertTrue(settings.quota_ready)

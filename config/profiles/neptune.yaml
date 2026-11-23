@@ -1,16 +1,18 @@
 profile_id: neptune
-provider: ollama
+provider: vllm
 study_config: config/study.neptune.yaml
-model: qwen3.8:27b
-ollama:
-  base_url: http://127.0.0.1:11435
-  binary: .local/ollama-neptune/runtime/bin/ollama
-  models_dir: .local/ollama-neptune/models
-  state_dir: .local/ollama-neptune
+model: Qwen/Qwen3.8-27B-FP8
+vllm:
+  base_url: http://127.0.0.1:11435/v1
+  venv_dir: .local/vllm-neptune/venv
+  hf_home: .local/vllm-neptune/hf_cache
+  state_dir: .local/vllm-neptune
   cuda_visible_devices: "0"
   num_gpus: 1
   num_ctx: 262144
   context_safety_tokens: 16384
   temperature: 0.0
-  num_parallel: 1
-  max_loaded_models: 1
+  gpu_memory_utilization: 0.90
+  kv_cache_dtype: fp8
+  tool_call_parser: qwen3_coder
+  reasoning_parser: qwen3

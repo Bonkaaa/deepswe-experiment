@@ -54,7 +54,7 @@ class Settings:
 
     @property
     def input_budget(self) -> int:
-        if self.model_provider != "ollama":
+        if self.model_provider not in ("ollama", "vllm"):
             return 1_000_000
         max_output = int(self.budget.get("max_output_tokens", 4096))
         return max(1024, self.ollama_num_ctx - max_output - self.ollama_context_safety_tokens)
@@ -178,7 +178,7 @@ def _validate_profile(config: object) -> dict:
     for key in ("profile_id", "provider", "model", "study_config"):
         if key not in config or not isinstance(config[key], str) or not config[key].strip():
             raise ValueError(f"Profile configuration missing or invalid: {key}")
-    if config["provider"] not in ("ollama", "google"):
+    if config["provider"] not in ("ollama", "google", "vllm"):
         raise ValueError(f"Unsupported provider: {config['provider']}")
     if config["provider"] == "ollama":
         ollama = config.get("ollama")
@@ -189,6 +189,15 @@ def _validate_profile(config: object) -> dict:
                 raise ValueError(f"Profile ollama section missing: {key}")
         if type(ollama["num_ctx"]) is not int or ollama["num_ctx"] <= 0:
             raise ValueError("ollama.num_ctx must be a positive integer")
+    elif config["provider"] == "vllm":
+        vllm = config.get("vllm")
+        if not isinstance(vllm, dict):
+            raise ValueError("vLLM profile must include a 'vllm' mapping")
+        for key in ("base_url", "state_dir", "num_ctx"):
+            if key not in vllm:
+                raise ValueError(f"Profile vllm section missing: {key}")
+        if type(vllm["num_ctx"]) is not int or vllm["num_ctx"] <= 0:
+            raise ValueError("vllm.num_ctx must be a positive integer")
     return config
 
 
@@ -260,7 +269,7 @@ def load_settings(
         provider = prof_config["provider"]
         model = prof_config["model"]
         key = os.environ.get("GEMINI_API_KEY", env.get("GEMINI_API_KEY") or "").strip() if provider == "google" else ""
-        ollama = prof_config.get("ollama", {})
+        backend_opts = prof_config.get("vllm", {}) if provider == "vllm" else prof_config.get("ollama", {})
 
         return Settings(
             root=root,
@@ -270,13 +279,13 @@ def load_settings(
             api_key=key,
             profile_id=prof_config["profile_id"],
             model_provider=provider,
-            ollama_base_url=str(ollama.get("base_url", "http://127.0.0.1:11434")),
-            ollama_num_ctx=int(ollama.get("num_ctx", 32768)),
-            ollama_context_safety_tokens=int(ollama.get("context_safety_tokens", 4096)),
-            ollama_binary=_resolve_profile_path(root, ollama.get("binary")),
-            ollama_models_dir=_resolve_profile_path(root, ollama.get("models_dir")),
-            ollama_state_dir=_resolve_profile_path(root, ollama.get("state_dir")),
-            ollama_options=ollama,
+            ollama_base_url=str(backend_opts.get("base_url", "http://127.0.0.1:11434")),
+            ollama_num_ctx=int(backend_opts.get("num_ctx", 32768)),
+            ollama_context_safety_tokens=int(backend_opts.get("context_safety_tokens", 4096)),
+            ollama_binary=_resolve_profile_path(root, backend_opts.get("binary")),
+            ollama_models_dir=_resolve_profile_path(root, backend_opts.get("models_dir")),
+            ollama_state_dir=_resolve_profile_path(root, backend_opts.get("state_dir")),
+            ollama_options=backend_opts,
             harness=harness or study_config.get("harness", "mini-swe-agent"),
         )
 

@@ -31,9 +31,18 @@ echo " Profile: ${PROFILE}"
 echo " Root:    ${REPO_ROOT}"
 echo "================================================================================"
 
-# Step 0: Ensure Ollama daemon is running
-echo "[Step 0/7] Ensuring Ollama background daemon is running..."
-"${REPO_ROOT}/scripts/start_ollama_local.sh" --profile "$PROFILE"
+# Step 0: Ensure local inference daemon (Ollama or vLLM) is running
+echo "[Step 0/7] Ensuring local inference server is running..."
+MODEL_PROVIDER=$(uv run --frozen python -c '
+import sys
+from deepswe_exp.components.configuration.settings import load_settings
+print(load_settings(profile=sys.argv[1]).model_provider)
+' "$PROFILE")
+if [[ "$MODEL_PROVIDER" == "vllm" ]]; then
+  "${REPO_ROOT}/scripts/start_vllm_neptune.sh"
+else
+  "${REPO_ROOT}/scripts/start_ollama_local.sh" --profile "$PROFILE"
+fi
 
 # Extract base study_id from settings and append timestamp
 BASE_STUDY_ID=$(uv run --frozen python -c '

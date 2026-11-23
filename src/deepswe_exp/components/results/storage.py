@@ -99,6 +99,28 @@ def fetch_ollama_metadata(base_url: str, model_tag: str, timeout: float = 2.0) -
     return meta
 
 
+def fetch_vllm_metadata(base_url: str, model_id: str, timeout: float = 2.0) -> dict:
+    import urllib.request
+    meta = {"reachable": False, "model_available": False, "max_model_len": None, "models": []}
+    base = base_url.rstrip("/")
+    if not base.endswith("/v1"):
+        base = f"{base}/v1"
+    try:
+        req = urllib.request.Request(f"{base}/models", headers={"User-Agent": "deepswe"})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read().decode("utf-8")).get("data", [])
+            meta["reachable"] = True
+            meta["models"] = [m.get("id") for m in data if isinstance(m, dict) and m.get("id")]
+            for m in data:
+                if isinstance(m, dict) and m.get("id") == model_id:
+                    meta["model_available"] = True
+                    meta["max_model_len"] = m.get("max_model_len")
+                    break
+    except Exception:
+        pass
+    return meta
+
+
 def protocol(settings, prepared, task_ids=None, model_metadata=None):
     selected = list(task_ids or prepared)
     validations = {task: read_json(settings.output_root / task / 'validation/validation.json') for task in selected}
@@ -115,8 +137,9 @@ def protocol(settings, prepared, task_ids=None, model_metadata=None):
         payload['profile_id'] = getattr(settings, "profile_id", None)
     if getattr(settings, "harness", "mini-swe-agent") != "mini-swe-agent":
         payload["harness"] = getattr(settings, "harness", "mini-swe-agent")
-    if getattr(settings, "model_provider", "google") == "ollama":
-        payload["ollama"] = {
+    if getattr(settings, "model_provider", "google") in ("ollama", "vllm"):
+        key_name = "vllm" if getattr(settings, "model_provider", "google") == "vllm" else "ollama"
+        payload[key_name] = {
             "base_url": settings.ollama_base_url,
             "num_ctx": settings.ollama_num_ctx,
             "options": getattr(settings, "ollama_options", {}),

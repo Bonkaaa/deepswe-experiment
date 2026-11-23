@@ -49,6 +49,20 @@ def build_mini_swe_model(settings: Any) -> LitellmModel:
             "max_tokens": max_tokens,
             "timeout": req_timeout,
         }
+    elif provider == "vllm":
+        model_name = settings.model
+        if not model_name.startswith("openai/"):
+            model_name = f"openai/{model_name}"
+        vllm_opts = getattr(settings, "ollama_options", {}) or {}
+        temperature = float(vllm_opts.get("temperature", 0.0))
+        model_kwargs = {
+            **base_kwargs,
+            "api_base": settings.ollama_base_url,
+            "api_key": "EMPTY",
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "timeout": req_timeout,
+        }
     elif provider == "google":
         model_name = settings.model
         if not model_name.startswith("gemini/"):

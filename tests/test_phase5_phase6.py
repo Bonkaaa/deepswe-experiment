@@ -143,10 +143,10 @@ class TestPhase5Phase6Scripts(unittest.TestCase):
             res = subprocess.run(cmd, capture_output=True, text=True, check=True)
             self.assertEqual(res.stdout.strip(), expected_id)
 
-        # 2. Snippet in start_ollama_local.sh for extracting ollama config
+        # 2. Snippet in start_ollama_local.sh for extracting ollama/vllm config
         for profile, expected_port, expected_model in [
             ("saturn", "11434", "qwen3.6:35b-a3b-coding"),
-            ("neptune", "11435", "qwen3.8:27b"),
+            ("neptune", "11435", "Qwen/Qwen3.8-27B-FP8"),
         ]:
             cmd = [
                 sys.executable,
@@ -168,7 +168,7 @@ print(f"MODEL={shlex.quote(str(s.model))}")
             self.assertIn(f"127.0.0.1:{expected_port}", res.stdout)
             self.assertIn(expected_model, res.stdout)
             if profile == "neptune":
-                self.assertIn("ollama-neptune", res.stdout)
+                self.assertIn("vllm-neptune", res.stdout)
 
         # 3. Snippet in stop_ollama_local.sh for state_dir
         cmd = [
@@ -178,7 +178,7 @@ print(f"MODEL={shlex.quote(str(s.model))}")
             "neptune",
         ]
         res = subprocess.run(cmd, capture_output=True, text=True, check=True)
-        self.assertIn("ollama-neptune", res.stdout)
+        self.assertIn("vllm-neptune", res.stdout)
 
     def test_archive_packaging_and_restoration(self) -> None:
         """Verify tarball creation and extraction preserves directory hierarchy and artifacts."""

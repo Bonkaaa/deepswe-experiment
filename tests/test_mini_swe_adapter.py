@@ -805,6 +805,72 @@ class TestSettingsAndRunnerDispatch(unittest.TestCase):
             self.assertEqual(res["status"], "fail_test")
             self.assertEqual(res["reward"], 0)
 
+    def test_vllm_provider_model_settings_doctor_and_connection(self):
+        import io
+        import json
+        import tempfile
+        from pathlib import Path
+        from deepswe_exp.__main__ import _doctor
+        from deepswe_exp.components.agent.connection import check_model_connection
+        from deepswe_exp.components.results.storage import fetch_vllm_metadata, protocol, write_json
+
+        # 1. Profile neptune loads vLLM configuration
+        neptune = load_settings(profile="neptune")
+        self.assertEqual(neptune.model_provider, "vllm")
+        self.assertEqual(neptune.model, "Qwen/Qwen3.8-27B-FP8")
+        self.assertEqual(neptune.ollama_base_url, "http://127.0.0.1:11435/v1")
+        self.assertEqual(neptune.ollama_num_ctx, 262144)
+        self.assertEqual(neptune.input_budget, 221184)
+        self.assertTrue(neptune.quota_ready)
+
+        # 2. build_mini_swe_model builds openai/<model> with api_base and api_key="EMPTY"
+        model = build_mini_swe_model(neptune)
+        self.assertEqual(model.config.model_name, "openai/Qwen/Qwen3.8-27B-FP8")
+        self.assertEqual(model.config.model_kwargs.get("api_base"), "http://127.0.0.1:11435/v1")
+        self.assertEqual(model.config.model_kwargs.get("api_key"), "EMPTY")
+        self.assertEqual(model.config.model_kwargs.get("max_tokens"), 24576)
+
+        # 3. fetch_vllm_metadata parses /v1/models
+        def fake_urlopen(req, timeout=2.0):
+            mock_resp = MagicMock()
+            mock_resp.read.return_value = json.dumps({
+                "data": [{"id": "Qwen/Qwen3.8-27B-FP8", "max_model_len": 262144}]
+            }).encode("utf-8")
+            mock_resp.__enter__.return_value = mock_resp
+            return mock_resp
+
+        with patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            meta = fetch_vllm_metadata("http://127.0.0.1:11435/v1", "Qwen/Qwen3.8-27B-FP8")
+            self.assertTrue(meta["reachable"])
+            self.assertTrue(meta["model_available"])
+            self.assertEqual(meta["max_model_len"], 262144)
+
+        # 4. _doctor passes for vllm when server serves the model
+        with patch("deepswe_exp.components.execution.docker_env.docker_status", return_value="available"), \
+             patch("deepswe_exp.components.results.storage.fetch_vllm_metadata", return_value={"reachable": True, "model_available": True, "max_model_len": 262144}):
+            buf = io.StringIO()
+            with patch("sys.stdout", buf):
+                code = _doctor(neptune)
+            self.assertEqual(code, 0)
+            self.assertIn("Provider: vllm", buf.getvalue())
+            self.assertIn("vLLM Model Served", buf.getvalue())
+
+        # 5. check_model_connection supports vllm without requiring GEMINI_API_KEY
+        fake_litellm = MagicMock()
+        fake_litellm.query.side_effect = [
+            {"role": "assistant", "content": "", "extra": {"actions": [{"command": "echo OK", "tool_call_id": "c1"}]}},
+            {"role": "assistant", "content": "OK", "extra": {"response": {"usage": {"prompt_tokens": 20, "completion_tokens": 5}}}},
+        ]
+        fake_litellm.format_observation_messages.return_value = [{"role": "tool", "tool_call_id": "c1", "content": "OK"}]
+        with tempfile.TemporaryDirectory() as td:
+            out_root = Path(td) / "runs"
+            with patch.object(type(neptune), "output_root", new_callable=lambda: property(lambda self: out_root)), \
+                 patch("deepswe_exp.components.agent.connection.fetch_vllm_metadata", return_value={"reachable": True, "model_available": True}), \
+                 patch("deepswe_exp.components.agent.connection.build_mini_swe_model", return_value=fake_litellm):
+                chk = check_model_connection(neptune)
+                self.assertEqual(chk["status"], "success")
+                self.assertTrue(chk["tool_calling_verified"])
+
 
 if __name__ == "__main__":
     unittest.main()

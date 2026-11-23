@@ -26,7 +26,8 @@ def plan_runs(settings, task_ids=None):
         if not validation.get("valid"):
             raise ValueError(f"Task not validated: {task}")
     model_metadata = None
-    if getattr(settings, "model_provider", "google") == "ollama":
+    provider = getattr(settings, "model_provider", "google")
+    if provider == "ollama":
         from ..results.storage import fetch_ollama_metadata
         model_metadata = fetch_ollama_metadata(settings.ollama_base_url, settings.model)
         write_json(settings.output_root / "protocol_snapshot.json", {
@@ -35,6 +36,18 @@ def plan_runs(settings, task_ids=None):
             "model": settings.model,
             "ollama_base_url": settings.ollama_base_url,
             "ollama_num_ctx": settings.ollama_num_ctx,
+            "metadata": model_metadata,
+            "frozen_at": utc_now(),
+        })
+    elif provider == "vllm":
+        from ..results.storage import fetch_vllm_metadata
+        model_metadata = fetch_vllm_metadata(settings.ollama_base_url, settings.model)
+        write_json(settings.output_root / "protocol_snapshot.json", {
+            "study_id": settings.config["study_id"],
+            "profile_id": getattr(settings, "profile_id", None),
+            "model": settings.model,
+            "vllm_base_url": settings.ollama_base_url,
+            "vllm_num_ctx": settings.ollama_num_ctx,
             "metadata": model_metadata,
             "frozen_at": utc_now(),
         })
