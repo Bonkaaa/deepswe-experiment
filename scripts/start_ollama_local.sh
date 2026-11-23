@@ -173,6 +173,15 @@ if [[ -n "$MODELS_DIR" ]]; then
   export OLLAMA_MODELS="${MODELS_DIR}"
 fi
 
+# Auto-enable repo-local NVIDIA CUDA Forward Compatibility (e.g. cuda-compat-12-8 on R535 H100 hosts)
+for compat_dir in "${STATE_DIR}"/cuda-compat/usr/local/cuda*/compat "${STATE_DIR}/cuda-compat"; do
+  if [[ -f "${compat_dir}/libcuda.so.1" ]]; then
+    export LD_LIBRARY_PATH="${compat_dir}:${LD_LIBRARY_PATH:-}"
+    echo "[start_ollama] Enabled local CUDA forward compatibility: ${compat_dir}"
+    break
+  fi
+done
+
 nohup "${BINARY}" serve > "${LOG_FILE}" 2>&1 &
 SERVER_PID=$!
 echo "${SERVER_PID}" > "${PID_FILE}"
