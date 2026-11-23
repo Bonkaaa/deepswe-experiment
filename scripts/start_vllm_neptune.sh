@@ -23,17 +23,24 @@ import shlex
 from deepswe_exp.components.configuration.settings import load_settings
 s = load_settings(profile="neptune")
 opts = s.ollama_options or {}
+venv_dir = opts.get("venv_dir", ".local/vllm-neptune/venv")
+hf_home = opts.get("hf_home", ".local/vllm-neptune/hf_cache")
+cuda_dev = opts.get("cuda_visible_devices", "0")
+gpu_util = opts.get("gpu_memory_utilization", 0.90)
+kv_dtype = opts.get("kv_cache_dtype", "fp8")
+tool_parser = opts.get("tool_call_parser", "qwen3_coder")
+reason_parser = opts.get("reasoning_parser", "qwen3")
 print(f"MODEL={shlex.quote(str(s.model))}")
 print(f"BASE_URL={shlex.quote(str(s.ollama_base_url))}")
 print(f"STATE_DIR={shlex.quote(str(s.ollama_state_dir))}")
-print(f"VENV_DIR={shlex.quote(str(opts.get(\"venv_dir\", \".local/vllm-neptune/venv\")))}")
-print(f"HF_HOME_CFG={shlex.quote(str(opts.get(\"hf_home\", \".local/vllm-neptune/hf_cache\")))}")
-print(f"CUDA_CFG={shlex.quote(str(opts.get(\"cuda_visible_devices\", \"0\")))}")
+print(f"VENV_DIR={shlex.quote(str(venv_dir))}")
+print(f"HF_HOME_CFG={shlex.quote(str(hf_home))}")
+print(f"CUDA_CFG={shlex.quote(str(cuda_dev))}")
 print(f"MAX_MODEL_LEN={shlex.quote(str(s.ollama_num_ctx))}")
-print(f"GPU_MEM_UTIL={shlex.quote(str(opts.get(\"gpu_memory_utilization\", 0.90)))}")
-print(f"KV_CACHE_DTYPE={shlex.quote(str(opts.get(\"kv_cache_dtype\", \"fp8\")))}")
-print(f"TOOL_PARSER={shlex.quote(str(opts.get(\"tool_call_parser\", \"qwen3_coder\")))}")
-print(f"REASONING_PARSER={shlex.quote(str(opts.get(\"reasoning_parser\", \"qwen3\")))}")
+print(f"GPU_MEM_UTIL={shlex.quote(str(gpu_util))}")
+print(f"KV_CACHE_DTYPE={shlex.quote(str(kv_dtype))}")
+print(f"TOOL_PARSER={shlex.quote(str(tool_parser))}")
+print(f"REASONING_PARSER={shlex.quote(str(reason_parser))}")
 ')"
 
 [[ "$STATE_DIR" != /* ]] && STATE_DIR="${REPO_ROOT}/${STATE_DIR}"
@@ -55,7 +62,7 @@ MODELS_URL="http://${HOST}:${PORT}/v1/models"
 
 if [[ "$RESTART" = true ]] && curl -s -f "${MODELS_URL}" >/dev/null 2>&1; then
   echo "[start_vllm] Restart requested. Stopping existing vLLM server..."
-  "${REPO_ROOT}/scripts/stop_vllm_neptune.sh" || true
+  bash "${REPO_ROOT}/scripts/stop_vllm_neptune.sh" || true
 fi
 
 echo "[start_vllm] Checking if vLLM is already active at ${MODELS_URL}..."

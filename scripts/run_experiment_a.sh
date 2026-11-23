@@ -39,9 +39,9 @@ from deepswe_exp.components.configuration.settings import load_settings
 print(load_settings(profile=sys.argv[1]).model_provider)
 ' "$PROFILE")
 if [[ "$MODEL_PROVIDER" == "vllm" ]]; then
-  "${REPO_ROOT}/scripts/start_vllm_neptune.sh"
+  bash "${REPO_ROOT}/scripts/start_vllm_neptune.sh"
 else
-  "${REPO_ROOT}/scripts/start_ollama_local.sh" --profile "$PROFILE"
+  bash "${REPO_ROOT}/scripts/start_ollama_local.sh" --profile "$PROFILE"
 fi
 
 # Extract base study_id from settings and append timestamp
