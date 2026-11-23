@@ -9,8 +9,8 @@ ollama:
   state_dir: .local/ollama-neptune
   cuda_visible_devices: "auto"
   num_gpus: 1
-  num_ctx: 131072
-  context_safety_tokens: 8192
+  num_ctx: 262144
+  context_safety_tokens: 16384
   temperature: 0.0
   num_parallel: 1
   max_loaded_models: 1

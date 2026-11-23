@@ -19,8 +19,8 @@ BUDGET_KEYS = (
 MAX_BUDGET = {
     "max_model_requests": 200,
     "wall_time_seconds": 7200,
-    "max_output_tokens": 16384,
-    "max_tool_output_chars": 8000,
+    "max_output_tokens": 32768,
+    "max_tool_output_chars": 16000,
     "tool_timeout_seconds": 120,
 }
 
