@@ -70,7 +70,7 @@ if [[ "$RESTART" = true ]] && curl -s -f "${BASE_URL}/api/tags" >/dev/null 2>&1;
     kill "$(cat "$PID_FILE")" 2>/dev/null || true
     sleep 2
   fi
-  pkill -f "${BINARY} serve" 2>/dev/null || true
+  pkill -u "$(id -u)" -f "${BINARY} serve" 2>/dev/null || true
   sleep 1
 fi
 
