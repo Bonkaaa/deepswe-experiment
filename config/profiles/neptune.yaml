@@ -7,7 +7,7 @@ ollama:
   binary: .local/ollama-neptune/runtime/bin/ollama
   models_dir: .local/ollama-neptune/models
   state_dir: .local/ollama-neptune
-  cuda_visible_devices: "auto"
+  cuda_visible_devices: "0"
   num_gpus: 1
   num_ctx: 262144
   context_safety_tokens: 16384
