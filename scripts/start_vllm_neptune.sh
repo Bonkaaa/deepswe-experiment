@@ -86,7 +86,29 @@ if [[ ! -x "${VLLM_BIN}" ]]; then
   bash "${REPO_ROOT}/scripts/setup_vllm_neptune.sh" --profile "${PROFILE}"
 fi
 
-export CUDA_VISIBLE_DEVICES="${ORIGINAL_CUDA_VISIBLE_DEVICES:-$CUDA_CFG}"
+if [[ -n "$ORIGINAL_CUDA_VISIBLE_DEVICES" ]]; then
+  export CUDA_VISIBLE_DEVICES="${ORIGINAL_CUDA_VISIBLE_DEVICES}"
+elif [[ "$CUDA_CFG" == "auto" ]]; then
+  AUTO_GPUS=$(nvidia-smi --query-gpu=index,memory.free --format=csv,noheader,nounits \
+    | awk -F',' -v n="${NUM_GPUS}" '
+        { gsub(/ /, "", $1); gsub(/ /, "", $2); if ($2 + 0 >= 10000) print $2, $1 }
+      ' \
+    | sort -nr \
+    | head -n "${NUM_GPUS}" \
+    | awk '{ print $2 }' \
+    | sort -n \
+    | paste -sd ',' -)
+  FOUND_COUNT=$(awk -F',' '{ if (NF == 1 && $1 == "") print 0; else print NF }' <<< "${AUTO_GPUS}")
+  if [[ "${FOUND_COUNT}" -lt "${NUM_GPUS}" ]]; then
+    echo "[start_vllm:${PROFILE}] ERROR: Need ${NUM_GPUS} free GPU(s) (>=10GB free VRAM each), but only found '${AUTO_GPUS:-none}'." >&2
+    nvidia-smi --query-gpu=index,name,memory.used,memory.free --format=csv >&2 || true
+    exit 1
+  fi
+  export CUDA_VISIBLE_DEVICES="${AUTO_GPUS}"
+  echo "[start_vllm:${PROFILE}] Auto-selected free GPU(s): CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES}"
+else
+  export CUDA_VISIBLE_DEVICES="${CUDA_CFG}"
+fi
 export HF_HOME="${HF_HOME_CFG}"
 
 # Auto-enable local cuda-compat if present (for driver 535 H100 hosts; prefer CUDA 13.0 compat for torch cu130)

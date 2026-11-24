@@ -7,7 +7,7 @@ vllm:
   venv_dir: .local/vllm-saturn/venv
   hf_home: .local/vllm-saturn/hf_cache
   state_dir: .local/vllm-saturn
-  cuda_visible_devices: "0,1"
+  cuda_visible_devices: "auto"
   num_gpus: 2
   num_ctx: 262144
   context_safety_tokens: 16384

@@ -36,7 +36,7 @@ class Phase1Phase2Tests(unittest.TestCase):
         self.assertEqual(settings.ollama_base_url, "http://127.0.0.1:11436/v1")
         self.assertEqual(settings.ollama_num_ctx, 262144)
         self.assertEqual(settings.ollama_options.get("num_gpus"), 2)
-        self.assertEqual(settings.ollama_options.get("cuda_visible_devices"), "0,1")
+        self.assertEqual(settings.ollama_options.get("cuda_visible_devices"), "auto")
         self.assertEqual(settings.output_root.name, "pilot-multilingual-gin-1805-v10-saturn-qwen38")
         self.assertTrue(settings.quota_ready)
 
