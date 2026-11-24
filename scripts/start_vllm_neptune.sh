@@ -110,6 +110,10 @@ else
   export CUDA_VISIBLE_DEVICES="${CUDA_CFG}"
 fi
 export HF_HOME="${HF_HOME_CFG}"
+USER_TMP="/tmp/vllm-${USER:-$(id -u)}-${PROFILE}"
+mkdir -p "${USER_TMP}"
+chmod 700 "${USER_TMP}" 2>/dev/null || true
+export TMPDIR="${USER_TMP}"
 
 # Auto-enable local cuda-compat if present (for driver 535 H100 hosts; prefer CUDA 13.0 compat for torch cu130)
 for compat_dir in \
