@@ -14,7 +14,7 @@ from deepswe_exp.components.agent.quota import QuotaLedger, QuotaUnavailable
 from deepswe_exp.components.configuration.settings import load_settings
 from deepswe_exp.components.evaluation.patches import collect_diff
 from deepswe_exp.components.evaluation.verifier import parse_result
-from deepswe_exp.components.results.report import _paired_groups, _test_visibility, summarize
+from deepswe_exp.components.results.report import _evaluation, _paired_groups, _test_visibility, summarize
 from deepswe_exp.components.results.storage import write_json, scratch_directory as create_scratch_directory
 from deepswe_exp.components.tasks.variants import choose, filter_snapshot, inventory, snapshot_hash
 from deepswe_exp.components.execution.runner import restart_group
@@ -167,6 +167,24 @@ class ComponentSmokeTests(unittest.TestCase):
             "tests/integration/morphing/test_names.py::test_alias[param]",
         ]}
         self.assertEqual(_test_visibility({"_ctrf": report}, manifest), (1, 1, 0))
+
+    def test_deepswe_f2p_counts_do_not_override_ctrf_visibility(self):
+        with scratch_directory() as tmp:
+            run_dir = Path(tmp)
+            write_json(run_dir / "evaluation/result.json", {
+                "status": "pass", "benchmark": {"f2p_total": 44, "f2p_passed": 44},
+            })
+            write_json(run_dir / "evaluation/verifier/ctrf.json", {"results": {"tests": [{
+                "name": "[f2p] tests.test_sample.test_bug", "status": "passed",
+            }]}})
+
+            evaluation = _evaluation(run_dir, {})
+            visible = _test_visibility(evaluation, {
+                "kept_node_ids": ["tests/test_sample.py::test_bug"],
+            })
+
+        self.assertNotIn("_swebench", evaluation)
+        self.assertEqual(visible, (1, 1, 0))
 
     def test_restart_supersedes_stale_running_attempt(self):
         group = [

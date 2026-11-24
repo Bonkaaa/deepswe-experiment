@@ -35,7 +35,7 @@ class Phase1Phase2Tests(unittest.TestCase):
         self.assertEqual(settings.model_provider, "ollama")
         self.assertEqual(settings.ollama_base_url, "http://127.0.0.1:11434")
         self.assertEqual(settings.ollama_num_ctx, 262144)
-        self.assertEqual(settings.output_root.name, "pilot-a-saturn-qwen36")
+        self.assertEqual(settings.output_root.name, "pilot-multilingual-gin-1805-v10-saturn-qwen36")
         self.assertTrue(settings.quota_ready)
 
     def test_load_profile_neptune(self):
@@ -45,7 +45,7 @@ class Phase1Phase2Tests(unittest.TestCase):
         self.assertEqual(settings.model_provider, "vllm")
         self.assertEqual(settings.ollama_base_url, "http://127.0.0.1:11435/v1")
         self.assertEqual(settings.ollama_num_ctx, 262144)
-        self.assertEqual(settings.output_root.name, "pilot-a-neptune-qwen38")
+        self.assertEqual(settings.output_root.name, "pilot-multilingual-gin-1805-v10-neptune-qwen38")
         self.assertTrue(settings.quota_ready)
 
     def test_backward_compatible_google(self):

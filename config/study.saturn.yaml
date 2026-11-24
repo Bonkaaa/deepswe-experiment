@@ -1,8 +1,8 @@
-study_id: "pilot-a-saturn-qwen36"
+study_id: "pilot-multilingual-gin-1805-v10-saturn-qwen36"
 data_root: "data"
 output_root: "runs"
 tasks:
-  - "adaptix-name-mapping-aliases"
+  - "gin-gonic__gin-1805"
 branches:
   - "100"
   - "50-random"
@@ -15,8 +15,8 @@ budget:
   max_tool_output_chars: 8000
   tool_timeout_seconds: 120
 task_options:
-  adaptix-name-mapping-aliases:
+  gin-gonic__gin-1805:
     role: smoke_test
-    scope_part: morphing
+    test_pattern: "^Test.*Router"
     product_paths:
-      - src/adaptix/
+      - routergroup.go

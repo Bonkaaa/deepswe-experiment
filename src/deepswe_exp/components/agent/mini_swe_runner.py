@@ -118,6 +118,7 @@ def run_mini_swe_agent(
     output_dir: Path,
     ledger: Any = None,
     protocol_hash: str = "",
+    cwd: str = "/app",
 ) -> AgentResult:
     """Run mini-SWE-agent loop in the provided Docker sandbox and normalize output to AgentResult."""
     started = time.monotonic()
@@ -128,7 +129,7 @@ def run_mini_swe_agent(
 
     env = SandboxEnvironment(
         box=box,
-        cwd="/app",
+        cwd=cwd,
         timeout=timeout,
         max_output_chars=max_output_chars,
         redact_fn=redact_fn,

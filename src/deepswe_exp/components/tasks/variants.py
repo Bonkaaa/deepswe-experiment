@@ -15,7 +15,9 @@ class MissingRelevanceScores(ValueError): pass
 def source_hash(root,prefixes=('src/adaptix',)):
     rows={}
     for prefix in prefixes:
-        for p in sorted((Path(root)/prefix).rglob('*')):
+        path=Path(root)/prefix
+        files=[path] if path.is_file() else sorted(path.rglob('*'))
+        for p in files:
             if p.is_file() and '__pycache__' not in p.parts:
                 rows[p.relative_to(root).as_posix()]=hashlib.sha256(p.read_bytes()).hexdigest()
     if not rows: raise ValueError('No product source found')
@@ -34,7 +36,7 @@ def snapshot_hash(root):
 def inventory(rows:Iterable[dict],scope_part='morphing')->list[TestGroup]:
     groups={}
     for row in rows:
-        if scope_part not in Path(row['file']).parts: continue
+        if scope_part is not None and scope_part not in Path(row['file']).parts: continue
         key=row['file']+'::'+((row.get('class')+'::') if row.get('class') else '')+row['function']
         g=groups.setdefault(key,{'id':key,'file':row['file'],'class':row.get('class'),
                                  'function':row['function'],'node_ids':[],

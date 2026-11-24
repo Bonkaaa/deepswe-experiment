@@ -31,6 +31,9 @@ def _evaluation(run_dir: Path, run: dict) -> dict:
         value = _read_optional(path)
         if value:
             value["_ctrf"] = _read_optional(path.parent / "verifier" / "ctrf.json")
+            benchmark=value.get("benchmark",{})
+            if isinstance(benchmark.get("f2p_success"),list) and isinstance(benchmark.get("p2p_success"),list):
+                value["_swebench"] = True
             return value
     return {}
 
@@ -44,6 +47,13 @@ def _normalize_node_id(node_id: str) -> str:
 
 
 def _test_visibility(evaluation: dict, manifest: dict) -> tuple[int | None, int | None, int | None]:
+    if evaluation.get("_swebench"):
+        benchmark=evaluation.get('benchmark',{})
+        visible={group.rsplit('::',1)[-1] for group in manifest.get('kept_groups',[])}
+        passing=set(benchmark.get('f2p_success',[])+benchmark.get('p2p_success',[]))
+        failing=set(benchmark.get('f2p_failure',[])+benchmark.get('p2p_failure',[]))
+        seen=visible & (passing|failing)
+        return len(seen),len(seen&passing),len(seen&failing)
     report = evaluation.get("_ctrf") or {}
     rows = report.get("results", {}).get("tests", [])
     visible = {_normalize_node_id(node_id) for node_id in manifest.get("kept_node_ids", [])}

@@ -8,10 +8,10 @@ from ..agent.agent import run_agent
 from ..agent.quota import QuotaLedger, LocalLedger
 from ..evaluation.patches import collect_diff
 from ..evaluation.verifier import evaluate_patch, evaluate_supplied_tests
-from ..results.storage import protocol, read_json, run_dir, utc_now, write_json
+from ..results.storage import digest, protocol, read_json, run_dir, utc_now, write_json
 from ..results.schemas import RunSpecification, RunState
-from ..tasks.tasks import load_task
-from .preparation import create_agent, export_app
+from ..tasks.tasks import load_task, verify_benchmark_record
+from .preparation import create_agent, export_app, verify_prepared_variant
 
 
 def plan_runs(settings, task_ids=None):
@@ -22,9 +22,13 @@ def plan_runs(settings, task_ids=None):
         raise ValueError("Invalid task selection")
     prepared = {task: read_json(settings.output_root / task / "prepared.json") for task in selected}
     for task in selected:
+        task_record=load_task(settings.task_path(task))
+        verify_benchmark_record(task_record,prepared[task])
         validation = read_json(settings.output_root / task / "validation/validation.json")
         if not validation.get("valid"):
             raise ValueError(f"Task not validated: {task}")
+        if task_record.benchmark and validation.get("prepared_hash")!=digest(prepared[task]):
+            raise ValueError(f"Task validation does not match prepared inputs; rerun validate: {task}")
     model_metadata = None
     provider = getattr(settings, "model_provider", "google")
     if provider == "ollama":
@@ -181,8 +185,9 @@ def run_next(settings, backend=None, task_id=None, run_id=None, restart=False):
     task = load_task(settings.task_path(run["task_id"]))
     task_root = settings.output_root / run["task_id"]
     prepared = read_json(task_root / "prepared.json")
+    verify_benchmark_record(task,prepared)
     variant = task_root / "prepared" / run["branch"] / str(run["seed"])
-    manifest = read_json(variant / "manifest.json")
+    manifest = verify_prepared_variant(task_root,prepared,run["branch"],run["seed"])
     out = run_dir(settings, run)
     if out.exists():
         raise FileExistsError(f"Run artifact path already exists: {out}")
@@ -229,6 +234,7 @@ def run_next(settings, backend=None, task_id=None, run_id=None, restart=False):
                     output_dir=out,
                     ledger=ledger,
                     protocol_hash=run["protocol_hash"],
+                    cwd=task.workdir,
                 )
             else:
                 agent_result = asyncio.run(run_agent(
@@ -238,6 +244,7 @@ def run_next(settings, backend=None, task_id=None, run_id=None, restart=False):
                     output_dir=out,
                     ledger=ledger,
                     protocol_hash=run["protocol_hash"],
+                    cwd=task.workdir,
                 ))
             write_json(out / "agent_result.json", agent_result)
             export_app(box, out / "final")
@@ -288,8 +295,11 @@ def evaluate_pending(settings, backend, run_id=None, task_id=None):
         out = run_dir(settings, run)
         task = load_task(settings.task_path(run["task_id"]))
         prepared = read_json(settings.output_root / run["task_id"] / "prepared.json")
+        verify_benchmark_record(task,prepared)
         variant = settings.output_root / run["task_id"] / "prepared" / run["branch"] / str(run["seed"])
-        manifest = read_json(variant / "manifest.json")
+        manifest = verify_prepared_variant(
+            settings.output_root / run["task_id"],prepared,run["branch"],run["seed"]
+        )
         visible = evaluate_supplied_tests(
             backend, task, prepared["image"], variant / "snapshot", manifest,
             out / "agent_patch.diff", out / "visible-tests-recheck", protocol_hash=run["protocol_hash"],

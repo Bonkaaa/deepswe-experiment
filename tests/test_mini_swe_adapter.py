@@ -432,7 +432,11 @@ class TestSettingsAndRunnerDispatch(unittest.TestCase):
                 config={"study_id": "test"},
                 redact=lambda x: str(x),
             )
-            run = run_next(settings, backend=MagicMock())
+            with patch(
+                "deepswe_exp.components.execution.runner.verify_prepared_variant",
+                return_value={"product_paths": []},
+            ):
+                run = run_next(settings, backend=MagicMock())
 
         mock_mini_runner.assert_called_once()
         self.assertEqual(run["status"], "scored")
@@ -495,7 +499,11 @@ class TestSettingsAndRunnerDispatch(unittest.TestCase):
                 config={"study_id": "test"},
                 redact=lambda x: str(x),
             )
-            run = run_next(settings, backend=MagicMock())
+            with patch(
+                "deepswe_exp.components.execution.runner.verify_prepared_variant",
+                return_value={"product_paths": []},
+            ):
+                run = run_next(settings, backend=MagicMock())
 
         mock_custom_runner.assert_called_once()
         self.assertEqual(run["status"], "scored")

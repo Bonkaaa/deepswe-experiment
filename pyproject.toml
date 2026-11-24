@@ -12,6 +12,7 @@ dependencies = [
     "tzdata>=2025.2",
     "PyYAML>=6.0,<7",
     "mini-swe-agent>=2.4.6,<3.0.0",
+    "swebench @ git+https://github.com/SWE-bench/SWE-bench.git@02e7a74ffd0b707aab73d203fe87bdc7c76afc8e",
 ]
 
 [project.scripts]
@@ -23,6 +24,10 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/deepswe_exp"]
+artifacts = ["src/deepswe_exp/components/tasks/filter_go_tests.go"]
+
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [tool.uv]
 package = true

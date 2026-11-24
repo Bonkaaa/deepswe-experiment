@@ -191,9 +191,24 @@ class Phase3Phase4Tests(unittest.TestCase):
         with scratch_directory() as out:
             settings = self.saturn_settings
             with patch.object(type(settings), "output_root", new_callable=PropertyMock, return_value=out):
-                task_dir = out / "adaptix-name-mapping-aliases"
-                write_json(task_dir / "prepared.json", {"image": "img", "manifests": {"100/42": {}, "50-random/42": {}, "0/42": {}}})
-                write_json(task_dir / "validation" / "validation.json", {"valid": True})
+                task_id = settings.task_ids[0]
+                task_dir = out / task_id
+                prepared = {"image": "img", "manifests": {"100/42": {}, "50-random/42": {}, "0/42": {}}}
+                from deepswe_exp.components.tasks.tasks import load_task
+                task = load_task(settings.task_path(task_id))
+                if isinstance(task.benchmark, dict):
+                    from deepswe_exp.components.execution.docker_env import BENCHMARK_CONTAINER_POLICY, benchmark_container_limits
+                    from deepswe_exp.components.tasks.tasks import benchmark_record_digest
+                    prepared["benchmark_instance_hash"] = benchmark_record_digest(task)
+                    prepared["harness_revision"] = task.benchmark["harness_revision"]
+                    prepared["grader_container_policy"] = {
+                        **BENCHMARK_CONTAINER_POLICY, **benchmark_container_limits(task.metadata),
+                    }
+                write_json(task_dir / "prepared.json", prepared)
+                validation = {"valid": True}
+                if isinstance(task.benchmark, dict):
+                    validation["prepared_hash"] = digest(prepared)
+                write_json(task_dir / "validation" / "validation.json", validation)
 
                 with patch("deepswe_exp.components.results.storage.fetch_ollama_metadata", return_value={"version": "0.5.4", "digest": "sha256:qwen35"}):
                     sched = plan_runs(settings)
@@ -202,6 +217,34 @@ class Phase3Phase4Tests(unittest.TestCase):
                     self.assertTrue((out / "protocol_snapshot.json").is_file())
                     snapshot = read_json(out / "protocol_snapshot.json")
                     self.assertEqual(snapshot["metadata"]["digest"], "sha256:qwen35")
+
+    def test_plan_runs_rejects_validation_for_different_prepared_inputs(self):
+        with scratch_directory() as out:
+            settings = self.saturn_settings
+            with patch.object(type(settings), "output_root", new_callable=PropertyMock, return_value=out):
+                task_id = settings.task_ids[0]
+                task_dir = out / task_id
+                from deepswe_exp.components.tasks.tasks import load_task
+                from deepswe_exp.components.execution.docker_env import BENCHMARK_CONTAINER_POLICY, benchmark_container_limits
+                from deepswe_exp.components.tasks.tasks import benchmark_record_digest
+
+                task = load_task(settings.task_path(task_id))
+                prepared = {
+                    "image": "img",
+                    "manifests": {"100/42": {}, "50-random/42": {}, "0/42": {}},
+                    "benchmark_instance_hash": benchmark_record_digest(task),
+                    "harness_revision": task.benchmark["harness_revision"],
+                    "grader_container_policy": {
+                        **BENCHMARK_CONTAINER_POLICY, **benchmark_container_limits(task.metadata),
+                    },
+                }
+                write_json(task_dir / "prepared.json", prepared)
+                write_json(task_dir / "validation" / "validation.json", {
+                    "valid": True, "prepared_hash": "stale-prepared-inputs",
+                })
+
+                with self.assertRaisesRegex(ValueError, "does not match prepared inputs"):
+                    plan_runs(settings)
 
     def test_schedule_digest_change_detection(self):
         with scratch_directory() as out:

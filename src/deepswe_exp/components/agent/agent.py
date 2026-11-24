@@ -17,7 +17,7 @@ def load_system_prompt(path):
     if not text: raise ValueError('Empty system prompt')
     return text
 
-def build_model(settings):
+def build_model(settings, cwd="/app"):
     if getattr(settings, "model_provider", "google") == "ollama":
         from langchain_ollama import ChatOllama
         return ChatOllama(
@@ -28,7 +28,7 @@ def build_model(settings):
             temperature=float(getattr(settings, "ollama_options", {}).get("temperature", 0.0)),
         ).bind_tools([{
             'name': 'run_shell',
-            'description': 'Run a shell command inside the assigned Linux repository at /app.',
+            'description': f'Run a shell command inside the assigned Linux repository at {cwd}.',
             'parameters': {'type': 'object', 'properties': {'command': {'type': 'string'}}, 'required': ['command']}
         }])
 
@@ -36,11 +36,11 @@ def build_model(settings):
     return ChatGoogleGenerativeAI(model=settings.model,api_key=settings.api_key,vertexai=False,
         max_output_tokens=settings.budget['max_output_tokens'],
         client_args={'http_options':{'retry_options':{'attempts':1}}}).bind_tools([{
-        'name':'run_shell','description':'Run a shell command inside the assigned Linux repository at /app.',
+        'name':'run_shell','description':f'Run a shell command inside the assigned Linux repository at {cwd}.',
         'parameters':{'type':'object','properties':{'command':{'type':'string'}},'required':['command']}}])
 
-async def run_agent(*,settings,instruction,box,output_dir,ledger,protocol_hash='',model=None,clock=time.monotonic)->AgentResult:
-    model=model or build_model(settings)
+async def run_agent(*,settings,instruction,box,output_dir,ledger,protocol_hash='',model=None,clock=time.monotonic,cwd="/app")->AgentResult:
+    model=model or build_model(settings,cwd)
     budget=settings.budget; started=clock(); deadline=started+budget['wall_time_seconds']
     messages=[SystemMessage(content=load_system_prompt(settings.prompt_path)),HumanMessage(content=instruction)]
     calls=0; stop='internal_error'; usage=[]; commands=[]; context_stats={}

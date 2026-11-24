@@ -1,4 +1,5 @@
 from __future__ import annotations
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -23,10 +24,17 @@ def collect_diff(baseline,final,output_dir,allowed_prefixes):
         tmp=tmp.resolve()
         repo=tmp/'worktree'; repo.mkdir()
         gitdir=tmp/'gitdata'
-        subprocess.run(['git','-c','core.longpaths=true','init','--bare','-q',str(gitdir)],cwd=tmp,check=True,capture_output=True)
+        git_env=os.environ.copy()
+        for key in tuple(git_env):
+            if key=='GIT_CONFIG_COUNT' or key.startswith(('GIT_CONFIG_KEY_','GIT_CONFIG_VALUE_')):
+                git_env.pop(key)
+        init=subprocess.run(['git','-c','core.longpaths=true','init','--bare','-q',str(gitdir)],
+                            cwd=tmp,check=False,capture_output=True,text=True,env=git_env)
+        if init.returncode:
+            raise RuntimeError(f'Temporary Git initialization failed: {init.stderr[-1000:]}')
         def git(*args):
             return subprocess.run(['git','-c','core.longpaths=true','--git-dir',str(gitdir),'--work-tree',str(repo),
-                                   '-c','core.autocrlf=false',*args],cwd=repo,check=True,capture_output=True).stdout
+                                   '-c','core.autocrlf=false',*args],cwd=repo,check=True,capture_output=True,env=git_env).stdout
         copy_snapshot(baseline,repo); git('add','-f','.')
         git('-c','user.name=Harness','-c','user.email=harness@local','commit','-qm','baseline','--allow-empty')
         for p in list(repo.iterdir()):

@@ -1,8 +1,8 @@
-study_id: "pilot-a"
+study_id: "pilot-multilingual-gin-1805-v10"
 data_root: "data"
 output_root: "runs"
 tasks:
-  - "adaptix-name-mapping-aliases"
+  - "gin-gonic__gin-1805"
 branches:
   - "100"
   - "50-random"
@@ -20,8 +20,8 @@ quota:
   rpd: 500
 quota_project: "Project-A"
 task_options:
-  adaptix-name-mapping-aliases:
+  gin-gonic__gin-1805:
     role: smoke_test
-    scope_part: morphing
+    test_pattern: "^Test.*Router"
     product_paths:
-      - src/adaptix/
+      - routergroup.go

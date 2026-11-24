@@ -7,6 +7,18 @@ import threading
 from pathlib import Path
 import docker
 
+BENCHMARK_CONTAINER_POLICY={
+    'network_mode':'none',
+    'cap_drop':['ALL'],
+    'cap_add':['CHOWN','DAC_OVERRIDE','FOWNER','SETUID','SETGID'],
+    'security_opt':['no-new-privileges'],
+}
+
+
+def benchmark_container_limits(metadata):
+    limits=(metadata or {}).get('environment',{})
+    return {'cpus':limits.get('cpus',2),'memory_mb':limits.get('memory_mb',8192)}
+
 class DockerFailure(RuntimeError): pass
 
 def docker_status():
@@ -34,10 +46,12 @@ def safe_extract(data,destination):
         archive.extractall(destination,filter='data')
 
 class Sandbox:
-    def __init__(self,client,image,metadata=None):
-        limits=(metadata or {}).get('environment',{})
+    def __init__(self,client,image,task=None):
+        metadata=getattr(task,'metadata',task) or {}
+        limits=metadata.get('environment',{})
+        self.cwd=getattr(task,'workdir','/app')
         self.container=client.containers.run(image,['sleep','infinity'],detach=True,
-            network_disabled=True,working_dir='/app',user='root',
+            network_disabled=True,working_dir=self.cwd,user='root',
             environment={'PAGER':'cat','MANPAGER':'cat','LESS':'-R','PIP_PROGRESS_BAR':'off','TQDM_DISABLE':'1'},
             nano_cpus=int(limits.get('cpus',2)*1e9),mem_limit=f"{limits.get('memory_mb',8192)}m",
             cap_drop=['ALL'],cap_add=['CHOWN','DAC_OVERRIDE','FOWNER','SETUID','SETGID'],
@@ -46,10 +60,13 @@ class Sandbox:
     def execute(self,command,timeout=120):
         token=__import__('uuid').uuid4().hex
         # timeout kills the entire command process group, including grandchildren.
-        wrapper=f"timeout --signal=TERM --kill-after=0.2s {max(.01,timeout):.3f}s bash -lc {shlex.quote(command)}"
+        wrapper=f"timeout --signal=TERM --kill-after=0.2s {max(.01,timeout):.3f}s bash -c {shlex.quote(command)}"
         result={}
         def worker():
-            try: result['value']=self.container.exec_run(['bash','-lc',wrapper],user=self.user,workdir='/app')
+            try:
+                options={'user':self.user,'workdir':self.cwd}
+                if self.user!='root': options['environment']={'HOME':'/home/experiment'}
+                result['value']=self.container.exec_run(['bash','-c',wrapper],**options)
             except Exception as e: result['error']=e
         thread=threading.Thread(target=worker,daemon=True); thread.start(); thread.join(timeout+10)
         if thread.is_alive():
@@ -95,8 +112,10 @@ class DockerBackend:
         except docker.errors.ImageNotFound: obj=self.client.images.pull(image)
         digests=obj.attrs.get('RepoDigests',[])
         return digests[0] if digests else obj.id
-    def sandbox(self,image,task): return Sandbox(self.client,image,task.metadata)
+    def sandbox(self,image,task): return Sandbox(self.client,image,task)
     def verifier_image(self,task,image):
+        if task.benchmark:
+            return image
         stream=io.BytesIO()
         with tarfile.open(fileobj=stream,mode='w') as t:
             for p in sorted((task.path/'tests').iterdir()):
@@ -113,8 +132,20 @@ class DockerBackend:
         stream.seek(0)
         built,_=self.client.images.build(fileobj=stream,custom_context=True,rm=True,timeout=1800)
         return built.id
+    def prepare_swebench_image(self,task,image):
+        stream=io.BytesIO()
+        with tarfile.open(fileobj=stream,mode='w') as archive:
+            data=(f'FROM {image}\nENV GOMODCACHE=/opt/swebench-go-mod-cache\n'
+                  f'RUN mkdir -p "$GOMODCACHE" && cd {task.workdir} && go mod download\n').encode()
+            info=tarfile.TarInfo('Dockerfile'); info.size=len(data); info.mode=0o644
+            archive.addfile(info,io.BytesIO(data))
+        stream.seek(0)
+        built,_=self.client.images.build(fileobj=stream,custom_context=True,rm=True,
+                                         network_mode='default',timeout=1800)
+        return built.id
 
 def checkout_base(box,task):
     sha=task.base_commit
     if len(sha)!=40 or any(c not in '0123456789abcdef' for c in sha): raise ValueError('Invalid commit')
-    box.checked(f'git config --global --add safe.directory /app && git reset --hard {sha} && git clean -fdx')
+    cwd=shlex.quote(box.cwd)
+    box.checked(f'git config --global --add safe.directory {cwd} && git -C {cwd} reset --hard {sha} && git -C {cwd} clean -fdx')

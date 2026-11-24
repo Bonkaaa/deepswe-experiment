@@ -1,0 +1,22 @@
+study_id: "pilot-a-saturn-qwen36"
+data_root: "data"
+output_root: "runs"
+tasks:
+  - "adaptix-name-mapping-aliases"
+branches:
+  - "100"
+  - "50-random"
+  - "0"
+sample_seed: 42
+budget:
+  max_model_requests: 200
+  wall_time_seconds: 7200
+  max_output_tokens: 16384
+  max_tool_output_chars: 8000
+  tool_timeout_seconds: 120
+task_options:
+  adaptix-name-mapping-aliases:
+    role: smoke_test
+    scope_part: morphing
+    product_paths:
+      - src/adaptix/
