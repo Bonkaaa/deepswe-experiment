@@ -37,7 +37,7 @@ class Phase1Phase2Tests(unittest.TestCase):
         self.assertEqual(settings.ollama_num_ctx, 262144)
         self.assertEqual(settings.ollama_options.get("num_gpus"), 2)
         self.assertEqual(settings.ollama_options.get("cuda_visible_devices"), "auto")
-        self.assertEqual(settings.output_root.name, "pilot-multilingual-gin-1805-v10-saturn-qwen38")
+        self.assertEqual(settings.output_root.name, "pilot-multilingual-terraform-35543-v10-saturn-qwen38")
         self.assertTrue(settings.quota_ready)
 
     def test_load_profile_neptune(self):
@@ -47,7 +47,7 @@ class Phase1Phase2Tests(unittest.TestCase):
         self.assertEqual(settings.model_provider, "vllm")
         self.assertEqual(settings.ollama_base_url, "http://127.0.0.1:11435/v1")
         self.assertEqual(settings.ollama_num_ctx, 262144)
-        self.assertEqual(settings.output_root.name, "pilot-multilingual-gin-1805-v10-neptune-qwen38")
+        self.assertEqual(settings.output_root.name, "pilot-multilingual-terraform-35543-v10-neptune-qwen38")
         self.assertTrue(settings.quota_ready)
 
     def test_backward_compatible_google(self):

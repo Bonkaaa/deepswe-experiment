@@ -42,7 +42,10 @@ def collect_diff(baseline,final,output_dir,allowed_prefixes):
             else: p.unlink()
         copy_snapshot(final,repo); git('add','-f','-A')
         full=git('diff','--cached','--binary','--no-renames','HEAD')
-        product=git('diff','--cached','--binary','--no-renames','HEAD','--',*allowed_prefixes)
+        pathspecs=[*allowed_prefixes]
+        if pathspecs and not any(str(p).endswith('_test.go') for p in pathspecs):
+            pathspecs.append(':!*_test.go')
+        product=git('diff','--cached','--binary','--no-renames','HEAD','--',*pathspecs)
     a=output_dir/'full_worktree.diff'; b=output_dir/'agent_patch.diff'
     a.write_bytes(full); b.write_bytes(product)
     return a,b

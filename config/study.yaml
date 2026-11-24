@@ -1,8 +1,8 @@
-study_id: "pilot-multilingual-gin-1805-v10"
+study_id: "pilot-multilingual-terraform-35543-v10"
 data_root: "data"
 output_root: "runs"
 tasks:
-  - "gin-gonic__gin-1805"
+  - "hashicorp__terraform-35543"
 branches:
   - "100"
   - "50-random"
@@ -20,8 +20,9 @@ quota:
   rpd: 500
 quota_project: "Project-A"
 task_options:
-  gin-gonic__gin-1805:
-    role: smoke_test
-    test_pattern: "^Test.*Router"
+  hashicorp__terraform-35543:
+    role: experiment
+    test_package: "./internal/terraform"
+    test_pattern: "^TestContext2Plan_import"
     product_paths:
-      - routergroup.go
+      - internal/terraform

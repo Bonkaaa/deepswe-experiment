@@ -26,6 +26,7 @@ type edit struct {
 
 func main() {
 	root := flag.String("root", "/testbed", "repository root")
+	pkg := flag.String("pkg", ".", "target Go package path")
 	pattern := flag.String("pattern", "^Test.*Router", "in-scope test names")
 	keepPath := flag.String("keep", "", "JSON list of retained test names")
 	flag.Parse()
@@ -50,30 +51,35 @@ func main() {
 		kept[name] = true
 	}
 
-	command := exec.Command("go", "list", "-json", ".")
+	command := exec.Command("go", "list", "-json", *pkg)
 	command.Dir = *root
 	packageData, err := command.CombinedOutput()
 	if err != nil {
 		fail("list active Go package files: %s", strings.TrimSpace(string(packageData)))
 	}
 	var packageFiles struct {
-		TestGoFiles []string
+		Dir          string
+		TestGoFiles  []string
 		XTestGoFiles []string
 	}
 	if err := json.Unmarshal(packageData, &packageFiles); err != nil {
 		fail("decode active Go package files: %v", err)
+	}
+	pkgDir := packageFiles.Dir
+	if pkgDir == "" {
+		pkgDir = *root
 	}
 	files := append(packageFiles.TestGoFiles, packageFiles.XTestGoFiles...)
 	if len(files) == 0 {
 		fail("find active Go test files")
 	}
 	for _, file := range files {
-		path := filepath.Join(*root, file)
+		path := filepath.Join(pkgDir, file)
 		if err := filterFile(path, patternRE, kept); err != nil {
 			fail("filter %s: %v", path, err)
 		}
 	}
-	if err := pruneUnusedImports(*root); err != nil {
+	if err := pruneUnusedImports(*root, *pkg); err != nil {
 		fail("prune unused Go imports: %v", err)
 	}
 }
@@ -127,9 +133,9 @@ type importLocation struct {
 	path string
 }
 
-func pruneUnusedImports(root string) error {
+func pruneUnusedImports(root string, pkg string) error {
 	for attempt := 0; attempt < 100; attempt++ {
-		command := exec.Command("go", "test", "-c", "-o", "/tmp/deepswe-filter-check.test", ".")
+		command := exec.Command("go", "test", "-c", "-o", "/tmp/deepswe-filter-check.test", pkg)
 		command.Dir = root
 		output, err := command.CombinedOutput()
 		if err == nil {

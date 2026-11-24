@@ -18,7 +18,7 @@ def source_hash(root,prefixes=('src/adaptix',)):
         path=Path(root)/prefix
         files=[path] if path.is_file() else sorted(path.rglob('*'))
         for p in files:
-            if p.is_file() and '__pycache__' not in p.parts:
+            if p.is_file() and '__pycache__' not in p.parts and not p.name.endswith('_test.go'):
                 rows[p.relative_to(root).as_posix()]=hashlib.sha256(p.read_bytes()).hexdigest()
     if not rows: raise ValueError('No product source found')
     return digest(rows)

@@ -87,7 +87,28 @@ class SwebenchTaskTests(unittest.TestCase):
         ) as collect:
             audit_go(box, task, manifest)
 
-        collect.assert_called_once_with(box, "^TestRouterKept$", allow_empty=True)
+        collect.assert_called_once_with(box, "^TestRouterKept$", allow_empty=True, package=".")
+
+    def test_go_subpackage_and_test_file_exclusion(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            base = root / "base"
+            final = root / "final"
+            for d in (base, final):
+                (d / "internal" / "terraform").mkdir(parents=True)
+                (d / "internal" / "terraform" / "eval_import.go").write_text("package terraform\nvar v = 1\n", encoding="utf-8")
+                (d / "internal" / "terraform" / "context_plan_import_test.go").write_text("package terraform\nfunc TestA() {}\n", encoding="utf-8")
+
+            # Editing *_test.go must NOT change source_hash or leak into agent_patch.diff
+            h_before = source_hash(base, ["internal/terraform"])
+            (final / "internal" / "terraform" / "context_plan_import_test.go").write_text("package terraform\n", encoding="utf-8")
+            self.assertEqual(source_hash(final, ["internal/terraform"]), h_before)
+
+            (final / "internal" / "terraform" / "eval_import.go").write_text("package terraform\nvar v = 2\n", encoding="utf-8")
+            full_diff, product_diff = collect_diff(base, final, root / "out", ["internal/terraform"])
+            self.assertIn("context_plan_import_test.go", full_diff.read_text(encoding="utf-8"))
+            self.assertNotIn("context_plan_import_test.go", product_diff.read_text(encoding="utf-8"))
+            self.assertIn("eval_import.go", product_diff.read_text(encoding="utf-8"))
 
     def test_swebench_prepare_resets_root_user_before_filtering_go_tests(self):
         from deepswe_exp.components.execution.preparation import _prepare_swebench
@@ -126,7 +147,7 @@ class SwebenchTaskTests(unittest.TestCase):
                 Path(dest).mkdir(parents=True, exist_ok=True)
                 (Path(dest) / "routergroup.go").write_text("package gin\n", encoding="utf-8")
 
-            def fake_filter(target_box, manifest, pattern, workdir):
+            def fake_filter(target_box, manifest, pattern, workdir, package="."):
                 users_during_filter.append(target_box.user)
 
             rows = [{"node_id": "./::TestRouterNotFound", "file": "go_test_scope", "function": "TestRouterNotFound", "class": None}]
@@ -884,7 +905,7 @@ class SwebenchVerifierTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[1]
         for config in ("study.yaml", "study.saturn.yaml", "study.neptune.yaml"):
             settings = load_settings(config_path=root / "config" / config)
-            self.assertEqual(settings.task_ids, [TASK_ID])
+            self.assertEqual(settings.task_ids, ["hashicorp__terraform-35543"])
             self.assertEqual(settings.config["branches"], ["100", "50-random", "0"])
         for config in ("study.deepswe.yaml", "study.saturn.deepswe.yaml", "study.neptune.deepswe.yaml"):
             settings = load_settings(config_path=root / "config" / config)

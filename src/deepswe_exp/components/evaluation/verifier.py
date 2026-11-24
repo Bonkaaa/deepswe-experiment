@@ -401,7 +401,8 @@ def _evaluate_go_tests(backend,task,image,snapshot,manifest,patch,output,timeout
             if patch_data:
                 box.put_bytes('/tmp/model.patch',patch_data)
                 box.checked(f'git -C {shlex.quote(box.cwd)} apply --check /tmp/model.patch && git -C {shlex.quote(box.cwd)} apply /tmp/model.patch')
-            rc,stdout=run_selected_go_tests(box,manifest,timeout)
+            package=manifest.get('test_package') or (task.benchmark.get('task_options',{}) if isinstance(task.benchmark,dict) else {}).get('test_package','.')
+            rc,stdout=run_selected_go_tests(box,manifest,timeout,package=package)
         (output/'stdout.txt').write_text(stdout,encoding='utf-8')
         names=[group.rsplit('::',1)[-1] for group in manifest['kept_groups']]
         test_results=parse_go_test_results(stdout,names)

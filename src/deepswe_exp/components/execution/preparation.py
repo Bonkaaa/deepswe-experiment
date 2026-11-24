@@ -171,6 +171,7 @@ def _prepare_swebench(settings,task,backend):
     root=settings.output_root/task.task_id
     options=settings.config.get('task_options',{}).get(task.task_id,{})
     pattern=options.get('test_pattern','^Test.*Router')
+    package=options.get('test_package','.')
     prefixes=options.get('product_paths',[])
     instance_hash=benchmark_record_digest(task)
     grader_policy={**BENCHMARK_CONTAINER_POLICY,**benchmark_container_limits(task.metadata)}
@@ -196,7 +197,7 @@ def _prepare_swebench(settings,task,backend):
     image=backend.prepare_swebench_image(task,base_image)
     with backend.sandbox(image,task) as box:
         checkout_base(box,task)
-        rows=collect_go_tests(box,pattern)
+        rows=collect_go_tests(box,pattern,package=package)
         clean(box)
         base=root/'base'
         shutil.rmtree(base,ignore_errors=True)
@@ -214,18 +215,19 @@ def _prepare_swebench(settings,task,backend):
             for branch in settings.config['branches']:
                 manifest=choose(groups,branch,seed)
                 manifest['test_pattern']=pattern
+                manifest['test_package']=package
                 variant=root/'prepared'/branch/str(seed)
                 shutil.rmtree(variant,ignore_errors=True)
                 variant.mkdir(parents=True,exist_ok=True)
                 box.user='root'
                 box.checked(f'find {shlex.quote(box.cwd)} -mindepth 1 -maxdepth 1 -exec rm -rf {{}} +')
                 box.put_tree(base,box.cwd)
-                filter_go_tests(box,manifest,pattern,box.cwd)
+                filter_go_tests(box,manifest,pattern,box.cwd,package=package)
                 clean(box)
                 audit_go(box,task,manifest)
                 export_app(box,variant/'snapshot')
                 manifest.update(source_hash=original_hash,product_paths=prefixes,test_pattern=pattern,
-                                snapshot_hash=snapshot_hash(variant/'snapshot'))
+                                test_package=package,snapshot_hash=snapshot_hash(variant/'snapshot'))
                 manifest.pop('manifest_hash')
                 manifest['manifest_hash']=digest(manifest)
                 if source_hash(variant/'snapshot',prefixes)!=original_hash:
@@ -246,7 +248,8 @@ def _prepare_swebench(settings,task,backend):
 def audit_go(box,task,manifest):
     options=task.benchmark.get('task_options',{})
     pattern=manifest.get('test_pattern') or options.get('test_pattern','^Test.*Router')
-    actual=collect_go_tests(box,pattern,allow_empty=True)
+    package=manifest.get('test_package') or options.get('test_package','.')
+    actual=collect_go_tests(box,pattern,allow_empty=True,package=package)
     expected=sorted(group.rsplit('::',1)[-1] for group in manifest['kept_groups'])
     found=sorted(row['function'] for row in actual)
     if found!=expected:
