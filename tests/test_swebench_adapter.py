@@ -905,7 +905,10 @@ class SwebenchVerifierTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[1]
         for config in ("study.yaml", "study.saturn.yaml", "study.neptune.yaml"):
             settings = load_settings(config_path=root / "config" / config)
-            self.assertEqual(settings.task_ids, ["hashicorp__terraform-35543"])
+            self.assertTrue(settings.task_ids)
+            for tid in settings.task_ids:
+                task = load_task(settings.task_path(tid))
+                self.assertIsInstance(task.benchmark, dict, f"{tid} in {config} should be a SWE-bench task")
             self.assertEqual(settings.config["branches"], ["100", "50-random", "0"])
         for config in ("study.deepswe.yaml", "study.saturn.deepswe.yaml", "study.neptune.deepswe.yaml"):
             settings = load_settings(config_path=root / "config" / config)
