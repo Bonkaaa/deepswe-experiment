@@ -278,9 +278,9 @@ class TestAgentContextIntegration(unittest.TestCase):
         from deepswe_exp.components.configuration.settings import load_settings
         settings = load_settings(profile="saturn")
         self.assertEqual(settings.ollama_num_ctx, 262144)
-        self.assertEqual(settings.ollama_context_safety_tokens, 8192)
-        # input_budget = 262144 - 16384 (max_output) - 8192 (safety) = 237568
-        self.assertEqual(settings.input_budget, 237568)
+        self.assertEqual(settings.ollama_context_safety_tokens, 16384)
+        # input_budget = 262144 - 24576 (max_output) - 16384 (safety) = 221184
+        self.assertEqual(settings.input_budget, 221184)
 
     def test_settings_override_study_id(self):
         from deepswe_exp.components.configuration.settings import load_settings
@@ -392,7 +392,7 @@ class TestAgentContextIntegration(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             base_settings = load_settings(profile="saturn")
-            config = {**base_settings.config, "budget": {**base_settings.budget, "max_model_requests": 5}}
+            config = {**base_settings.config, "budget": {**base_settings.budget, "max_model_requests": 5, "max_output_tokens": 16384}}
             settings = replace(base_settings, config=config)
             model = OutputTruncatedFakeModel(recover=True)
             box = FakeBox()
@@ -496,7 +496,7 @@ class TestAgentContextIntegration(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)
             base_settings = load_settings(profile="saturn")
-            config = {**base_settings.config, "budget": {**base_settings.budget, "max_model_requests": 5}}
+            config = {**base_settings.config, "budget": {**base_settings.budget, "max_model_requests": 5, "max_output_tokens": 16384}}
             settings = replace(base_settings, config=config)
             model = OutputTruncatedFakeModel(recover=False)
             box = FakeBox()

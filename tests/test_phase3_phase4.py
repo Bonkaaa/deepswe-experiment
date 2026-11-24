@@ -31,9 +31,17 @@ def scratch_directory():
 
 class Phase3Phase4Tests(unittest.TestCase):
     def setUp(self):
+        from dataclasses import replace
+
         self.saturn_settings = load_settings(profile="saturn")
         self.neptune_settings = load_settings(profile="neptune")
         self.google_settings = load_settings()
+        self.ollama_settings = replace(
+            self.saturn_settings,
+            model_provider="ollama",
+            model="qwen3.6:35b-a3b-coding",
+            ollama_base_url="http://127.0.0.1:11434",
+        )
 
     def test_protocol_hash_differentiation(self):
         with scratch_directory() as out:
@@ -114,11 +122,19 @@ class Phase3Phase4Tests(unittest.TestCase):
             self.assertIsNone(offline_meta["digest"])
 
     def test_doctor_profile_ollama(self):
+        from dataclasses import replace
+
+        ollama_settings = replace(
+            self.saturn_settings,
+            model_provider="ollama",
+            model="qwen3.6:35b-a3b-coding",
+            ollama_base_url="http://127.0.0.1:11434",
+        )
         with patch("deepswe_exp.components.execution.docker_env.docker_status", return_value="available"), \
              patch("deepswe_exp.components.results.storage.fetch_ollama_metadata", return_value={"version": "0.5.4", "digest": "sha256:qwen35testdigest"}):
             stdout_buf = io.StringIO()
             with patch("sys.stdout", stdout_buf):
-                code = _doctor(self.saturn_settings)
+                code = _doctor(ollama_settings)
             output = stdout_buf.getvalue()
             self.assertEqual(code, 0)
             self.assertIn("Profile: saturn", output)
@@ -131,11 +147,19 @@ class Phase3Phase4Tests(unittest.TestCase):
             self.assertNotIn("Gemini API key", output)
 
     def test_doctor_profile_ollama_missing_model(self):
+        from dataclasses import replace
+
+        ollama_settings = replace(
+            self.saturn_settings,
+            model_provider="ollama",
+            model="qwen3.6:35b-a3b-coding",
+            ollama_base_url="http://127.0.0.1:11434",
+        )
         with patch("deepswe_exp.components.execution.docker_env.docker_status", return_value="available"), \
              patch("deepswe_exp.components.results.storage.fetch_ollama_metadata", return_value={"version": "0.5.4", "digest": None}):
             stdout_buf = io.StringIO()
             with patch("sys.stdout", stdout_buf):
-                code = _doctor(self.saturn_settings)
+                code = _doctor(ollama_settings)
             output = stdout_buf.getvalue()
             self.assertEqual(code, 2)
             self.assertIn("MISSING  Ollama Model Installed", output)
@@ -159,7 +183,7 @@ class Phase3Phase4Tests(unittest.TestCase):
         mock_model.ainvoke = fake_ainvoke
 
         with scratch_directory() as out:
-            settings = self.saturn_settings
+            settings = self.ollama_settings
             with patch.object(type(settings), "output_root", new_callable=PropertyMock, return_value=out), \
                  patch("deepswe_exp.components.agent.connection.fetch_ollama_metadata", return_value={"version": "0.5.4", "digest": "sha256:abc"}):
                 result = check_model_connection(settings, model=mock_model)
@@ -189,7 +213,7 @@ class Phase3Phase4Tests(unittest.TestCase):
 
     def test_plan_runs_freezes_snapshot_and_metadata(self):
         with scratch_directory() as out:
-            settings = self.saturn_settings
+            settings = self.ollama_settings
             with patch.object(type(settings), "output_root", new_callable=PropertyMock, return_value=out):
                 task_id = settings.task_ids[0]
                 task_dir = out / task_id
@@ -248,7 +272,7 @@ class Phase3Phase4Tests(unittest.TestCase):
 
     def test_schedule_digest_change_detection(self):
         with scratch_directory() as out:
-            settings = self.saturn_settings
+            settings = self.ollama_settings
             with patch.object(type(settings), "output_root", new_callable=PropertyMock, return_value=out):
                 task_dir = out / "adaptix-name-mapping-aliases"
                 write_json(task_dir / "prepared.json", {"image": "img"})

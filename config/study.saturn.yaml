@@ -1,4 +1,4 @@
-study_id: "pilot-multilingual-gin-1805-v10-saturn-qwen36"
+study_id: "pilot-multilingual-gin-1805-v10-saturn-qwen38"
 data_root: "data"
 output_root: "runs"
 tasks:
@@ -11,8 +11,8 @@ sample_seed: 42
 budget:
   max_model_requests: 200
   wall_time_seconds: 7200
-  max_output_tokens: 16384
-  max_tool_output_chars: 8000
+  max_output_tokens: 24576
+  max_tool_output_chars: 12000
   tool_timeout_seconds: 120
 task_options:
   gin-gonic__gin-1805:

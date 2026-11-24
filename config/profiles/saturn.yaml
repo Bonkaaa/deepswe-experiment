@@ -1,16 +1,19 @@
 profile_id: saturn
-provider: ollama
+provider: vllm
 study_config: config/study.saturn.yaml
-model: qwen3.6:35b-a3b-coding
-ollama:
-  base_url: http://127.0.0.1:11434
-  binary: .local/ollama/bin/ollama
-  models_dir: .local/ollama/models
-  state_dir: .local/ollama
-  cuda_visible_devices: "auto"
+model: Qwen/Qwen3.8-27B-FP8
+vllm:
+  base_url: http://127.0.0.1:11434/v1
+  venv_dir: .local/vllm-saturn/venv
+  hf_home: .local/vllm-saturn/hf_cache
+  state_dir: .local/vllm-saturn
+  cuda_visible_devices: "0,1"
   num_gpus: 2
   num_ctx: 262144
-  context_safety_tokens: 8192
+  context_safety_tokens: 16384
   temperature: 0.0
-  num_parallel: 1
-  max_loaded_models: 1
+  gpu_memory_utilization: 0.90
+  kv_cache_dtype: auto
+  max_num_seqs: 16
+  tool_call_parser: qwen3_coder
+  reasoning_parser: qwen3

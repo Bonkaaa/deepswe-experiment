@@ -3,11 +3,16 @@ set -euo pipefail
 export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$PATH"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PROFILE="neptune"
 RESTART=false
 ORIGINAL_CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-}"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --profile)
+      PROFILE="$2"
+      shift 2
+      ;;
     --restart)
       RESTART=true
       shift
@@ -19,13 +24,15 @@ while [[ $# -gt 0 ]]; do
 done
 
 eval "$(uv run --frozen python -c '
-import shlex
+import sys, shlex
 from deepswe_exp.components.configuration.settings import load_settings
-s = load_settings(profile="neptune")
+profile = sys.argv[1]
+s = load_settings(profile=profile)
 opts = s.ollama_options or {}
-venv_dir = opts.get("venv_dir", ".local/vllm-neptune/venv")
-hf_home = opts.get("hf_home", ".local/vllm-neptune/hf_cache")
+venv_dir = opts.get("venv_dir", f".local/vllm-{profile}/venv")
+hf_home = opts.get("hf_home", f".local/vllm-{profile}/hf_cache")
 cuda_dev = opts.get("cuda_visible_devices", "0")
+num_gpus = opts.get("num_gpus", 1)
 gpu_util = opts.get("gpu_memory_utilization", 0.90)
 kv_dtype = opts.get("kv_cache_dtype", "auto")
 max_num_seqs = opts.get("max_num_seqs", 16)
@@ -37,13 +44,14 @@ print(f"STATE_DIR={shlex.quote(str(s.ollama_state_dir))}")
 print(f"VENV_DIR={shlex.quote(str(venv_dir))}")
 print(f"HF_HOME_CFG={shlex.quote(str(hf_home))}")
 print(f"CUDA_CFG={shlex.quote(str(cuda_dev))}")
+print(f"NUM_GPUS={shlex.quote(str(num_gpus))}")
 print(f"MAX_MODEL_LEN={shlex.quote(str(s.ollama_num_ctx))}")
 print(f"GPU_MEM_UTIL={shlex.quote(str(gpu_util))}")
 print(f"KV_CACHE_DTYPE={shlex.quote(str(kv_dtype))}")
 print(f"MAX_NUM_SEQS={shlex.quote(str(max_num_seqs))}")
 print(f"TOOL_PARSER={shlex.quote(str(tool_parser))}")
 print(f"REASONING_PARSER={shlex.quote(str(reason_parser))}")
-')"
+' "$PROFILE")"
 
 [[ "$STATE_DIR" != /* ]] && STATE_DIR="${REPO_ROOT}/${STATE_DIR}"
 [[ "$VENV_DIR" != /* ]] && VENV_DIR="${REPO_ROOT}/${VENV_DIR}"
@@ -63,19 +71,19 @@ PORT="${HOST_PORT#*:}"
 MODELS_URL="http://${HOST}:${PORT}/v1/models"
 
 if [[ "$RESTART" = true ]] && curl -s -f "${MODELS_URL}" >/dev/null 2>&1; then
-  echo "[start_vllm] Restart requested. Stopping existing vLLM server..."
-  bash "${REPO_ROOT}/scripts/stop_vllm_neptune.sh" || true
+  echo "[start_vllm:${PROFILE}] Restart requested. Stopping existing vLLM server..."
+  bash "${REPO_ROOT}/scripts/stop_vllm_neptune.sh" --profile "${PROFILE}" || true
 fi
 
-echo "[start_vllm] Checking if vLLM is already active at ${MODELS_URL}..."
+echo "[start_vllm:${PROFILE}] Checking if vLLM is already active at ${MODELS_URL}..."
 if curl -s -f "${MODELS_URL}" >/dev/null 2>&1; then
-  echo "[start_vllm] vLLM is already running and reachable at ${MODELS_URL}."
+  echo "[start_vllm:${PROFILE}] vLLM is already running and reachable at ${MODELS_URL}."
   exit 0
 fi
 
 if [[ ! -x "${VLLM_BIN}" ]]; then
-  echo "[start_vllm] vLLM not installed at ${VLLM_BIN}. Running setup_vllm_neptune.sh..."
-  bash "${REPO_ROOT}/scripts/setup_vllm_neptune.sh"
+  echo "[start_vllm:${PROFILE}] vLLM not installed at ${VLLM_BIN}. Running setup_vllm_neptune.sh --profile ${PROFILE}..."
+  bash "${REPO_ROOT}/scripts/setup_vllm_neptune.sh" --profile "${PROFILE}"
 fi
 
 export CUDA_VISIBLE_DEVICES="${ORIGINAL_CUDA_VISIBLE_DEVICES:-$CUDA_CFG}"
@@ -95,11 +103,11 @@ for compat_dir in \
   fi
 done
 
-echo "[start_vllm] Starting vLLM on GPU(s) CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES} (${HOST}:${PORT})..."
+echo "[start_vllm:${PROFILE}] Starting vLLM on GPU(s) CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES} (TP=${NUM_GPUS}, ${HOST}:${PORT})..."
 nohup "${VLLM_BIN}" serve "${MODEL}" \
   --host "${HOST}" \
   --port "${PORT}" \
-  --tensor-parallel-size 1 \
+  --tensor-parallel-size "${NUM_GPUS}" \
   --max-model-len "${MAX_MODEL_LEN}" \
   --max-num-seqs "${MAX_NUM_SEQS}" \
   --gpu-memory-utilization "${GPU_MEM_UTIL}" \

@@ -123,7 +123,7 @@ class TestPhase5Phase6Scripts(unittest.TestCase):
     def test_settings_study_id_property(self) -> None:
         """Verify Settings.study_id property correctly mirrors config['study_id']."""
         saturn_settings = load_settings(profile="saturn")
-        self.assertEqual(saturn_settings.study_id, "pilot-multilingual-gin-1805-v10-saturn-qwen36")
+        self.assertEqual(saturn_settings.study_id, "pilot-multilingual-gin-1805-v10-saturn-qwen38")
         self.assertEqual(saturn_settings.study_id, saturn_settings.config["study_id"])
 
         neptune_settings = load_settings(profile="neptune")
@@ -133,7 +133,7 @@ class TestPhase5Phase6Scripts(unittest.TestCase):
     def test_python_snippets_in_scripts_execute_without_error(self) -> None:
         """Execute the embedded Python snippets used in shell scripts and verify values."""
         # 1. Snippet in run_experiment_a.sh for extracting study_id
-        for profile, expected_id in [("saturn", "pilot-multilingual-gin-1805-v10-saturn-qwen36"), ("neptune", "pilot-multilingual-gin-1805-v10-neptune-qwen38")]:
+        for profile, expected_id in [("saturn", "pilot-multilingual-gin-1805-v10-saturn-qwen38"), ("neptune", "pilot-multilingual-gin-1805-v10-neptune-qwen38")]:
             cmd = [
                 sys.executable,
                 "-c",
@@ -145,7 +145,7 @@ class TestPhase5Phase6Scripts(unittest.TestCase):
 
         # 2. Snippet in start_ollama_local.sh for extracting ollama/vllm config
         for profile, expected_port, expected_model in [
-            ("saturn", "11434", "qwen3.6:35b-a3b-coding"),
+            ("saturn", "11434", "Qwen/Qwen3.8-27B-FP8"),
             ("neptune", "11435", "Qwen/Qwen3.8-27B-FP8"),
         ]:
             cmd = [
