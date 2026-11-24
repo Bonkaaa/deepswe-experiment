@@ -145,7 +145,7 @@ class TestPhase5Phase6Scripts(unittest.TestCase):
 
         # 2. Snippet in start_ollama_local.sh for extracting ollama/vllm config
         for profile, expected_port, expected_model in [
-            ("saturn", "11434", "Qwen/Qwen3.8-27B-FP8"),
+            ("saturn", "11436", "Qwen/Qwen3.8-27B-FP8"),
             ("neptune", "11435", "Qwen/Qwen3.8-27B-FP8"),
         ]:
             cmd = [

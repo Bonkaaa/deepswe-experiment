@@ -3,7 +3,7 @@ provider: vllm
 study_config: config/study.saturn.yaml
 model: Qwen/Qwen3.8-27B-FP8
 vllm:
-  base_url: http://127.0.0.1:11434/v1
+  base_url: http://127.0.0.1:11436/v1
   venv_dir: .local/vllm-saturn/venv
   hf_home: .local/vllm-saturn/hf_cache
   state_dir: .local/vllm-saturn

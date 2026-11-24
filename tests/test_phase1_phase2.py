@@ -33,7 +33,7 @@ class Phase1Phase2Tests(unittest.TestCase):
         self.assertEqual(settings.profile_id, "saturn")
         self.assertEqual(settings.model, "Qwen/Qwen3.8-27B-FP8")
         self.assertEqual(settings.model_provider, "vllm")
-        self.assertEqual(settings.ollama_base_url, "http://127.0.0.1:11434/v1")
+        self.assertEqual(settings.ollama_base_url, "http://127.0.0.1:11436/v1")
         self.assertEqual(settings.ollama_num_ctx, 262144)
         self.assertEqual(settings.ollama_options.get("num_gpus"), 2)
         self.assertEqual(settings.ollama_options.get("cuda_visible_devices"), "0,1")

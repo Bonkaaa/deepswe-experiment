@@ -76,8 +76,8 @@ if [[ "$RESTART" = true ]] && curl -s -f "${MODELS_URL}" >/dev/null 2>&1; then
 fi
 
 echo "[start_vllm:${PROFILE}] Checking if vLLM is already active at ${MODELS_URL}..."
-if curl -s -f "${MODELS_URL}" >/dev/null 2>&1; then
-  echo "[start_vllm:${PROFILE}] vLLM is already running and reachable at ${MODELS_URL}."
+if curl -s -f "${MODELS_URL}" 2>/dev/null | grep -Fq "${MODEL}"; then
+  echo "[start_vllm:${PROFILE}] vLLM is already running and serving ${MODEL} at ${MODELS_URL}."
   exit 0
 fi
 
