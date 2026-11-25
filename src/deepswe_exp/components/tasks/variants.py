@@ -2,6 +2,7 @@ from __future__ import annotations
 import ast
 import hashlib
 import math
+import os
 import random
 from pathlib import Path
 from typing import Iterable,Sequence
@@ -13,23 +14,33 @@ BRANCH_RATIOS={'100':1.,'70-random':.7,'50-random':.5,'30-random':.3,'0':0.}
 class MissingRelevanceScores(ValueError): pass
 
 def source_hash(root,prefixes=('src/adaptix',)):
-    rows={}
+    root_path=Path(root); root_resolved=root_path.resolve(); rows={}
     for prefix in prefixes:
-        path=Path(root)/prefix
-        files=[path] if path.is_file() else sorted(path.rglob('*'))
+        path=root_path/prefix
+        files=[path] if (path.is_file() or path.is_symlink()) else sorted(path.rglob('*'))
         for p in files:
-            if p.is_file() and '__pycache__' not in p.parts and not p.name.endswith('_test.go'):
-                rows[p.relative_to(root).as_posix()]=hashlib.sha256(p.read_bytes()).hexdigest()
+            if '__pycache__' in p.parts or p.name.endswith('_test.go'): continue
+            if p.is_symlink():
+                linkname=os.readlink(p)
+                if linkname.startswith('/') or Path(linkname).is_absolute() or not (p.parent/linkname).resolve().is_relative_to(root_resolved):
+                    raise ValueError(f'Unsafe symlink in source: {p.relative_to(root_path).as_posix()} -> {linkname}')
+                rows[p.relative_to(root_path).as_posix()]='symlink:'+linkname
+            elif p.is_file():
+                rows[p.relative_to(root_path).as_posix()]=hashlib.sha256(p.read_bytes()).hexdigest()
     if not rows: raise ValueError('No product source found')
     return digest(rows)
 
 def snapshot_hash(root):
-    root=Path(root); rows={}
+    root=Path(root); root_resolved=root.resolve(); rows={}
     for path in sorted(root.rglob('*')):
         relative=path.relative_to(root)
         if any(part in ('.git','__pycache__','.pytest_cache') for part in relative.parts): continue
-        if path.is_symlink(): raise ValueError(f'Symlink in snapshot: {relative.as_posix()}')
-        if path.is_file(): rows[relative.as_posix()]=hashlib.sha256(path.read_bytes()).hexdigest()
+        if path.is_symlink():
+            linkname=os.readlink(path)
+            if linkname.startswith('/') or Path(linkname).is_absolute() or not (path.parent/linkname).resolve().is_relative_to(root_resolved):
+                raise ValueError(f'Unsafe symlink in snapshot: {relative.as_posix()} -> {linkname}')
+            rows[relative.as_posix()]='symlink:'+linkname
+        elif path.is_file(): rows[relative.as_posix()]=hashlib.sha256(path.read_bytes()).hexdigest()
     if not rows: raise ValueError('Empty snapshot')
     return digest(rows)
 

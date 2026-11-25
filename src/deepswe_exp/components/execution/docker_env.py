@@ -1,6 +1,7 @@
 from __future__ import annotations
 import io
 import json
+import os
 import shlex
 import tarfile
 import threading
@@ -36,13 +37,25 @@ def docker_status():
             except Exception:
                 pass
 
+def _check_safe_symlink(link_path: Path, linkname: str, root: Path, label: str) -> None:
+    if linkname.startswith('/') or Path(linkname).is_absolute():
+        raise DockerFailure(f'Unsafe symlink ({label}): {linkname}')
+    if not (link_path.parent / linkname).resolve().is_relative_to(root):
+        raise DockerFailure(f'Unsafe symlink ({label}): {linkname}')
+
 def safe_extract(data,destination):
     destination=Path(destination); destination.mkdir(parents=True,exist_ok=True)
+    dest_root=destination.resolve()
     with tarfile.open(fileobj=io.BytesIO(data)) as archive:
         for m in archive.getmembers():
             target=(destination/m.name).resolve()
-            if not target.is_relative_to(destination.resolve()) or m.issym() or m.islnk() or m.isdev():
-                raise DockerFailure('Unsafe archive member')
+            if not target.is_relative_to(dest_root) or m.isdev():
+                raise DockerFailure(f'Unsafe archive member: {m.name}')
+            if m.issym():
+                _check_safe_symlink(target,m.linkname,dest_root,m.name)
+            elif m.islnk():
+                if not (destination/m.linkname).resolve().is_relative_to(dest_root):
+                    raise DockerFailure(f'Unsafe archive hardlink: {m.name} -> {m.linkname}')
         archive.extractall(destination,filter='data')
 
 class Sandbox:
@@ -88,13 +101,19 @@ class Sandbox:
         if not self.container.put_archive(parent,stream.getvalue()):
             raise DockerFailure('Docker rejected file archive')
     def put_tree(self,source,dest):
-        source=Path(source); stream=io.BytesIO()
+        source=Path(source); source_root=source.resolve(); stream=io.BytesIO()
         self.checked('mkdir -p '+shlex.quote(dest))
         with tarfile.open(fileobj=stream,mode='w') as t:
             for p in sorted(source.rglob('*')):
-                if p.is_symlink(): raise DockerFailure('Symlink snapshots are not supported')
-                if p.is_file() and not any(x in ('.git','__pycache__','.pytest_cache') for x in p.relative_to(source).parts):
-                    t.add(p,arcname=p.relative_to(source).as_posix(),recursive=False)
+                rel=p.relative_to(source)
+                if any(x in ('.git','__pycache__','.pytest_cache') for x in rel.parts): continue
+                if p.is_symlink():
+                    linkname=os.readlink(p)
+                    _check_safe_symlink(p,linkname,source_root,rel.as_posix())
+                    info=tarfile.TarInfo(rel.as_posix()); info.type=tarfile.SYMTYPE; info.linkname=linkname
+                    t.addfile(info)
+                elif p.is_file():
+                    t.add(p,arcname=rel.as_posix(),recursive=False)
         if not self.container.put_archive(dest,stream.getvalue()):
             raise DockerFailure('Docker rejected snapshot archive')
     def get_tree(self,source,dest):

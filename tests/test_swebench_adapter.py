@@ -110,6 +110,37 @@ class SwebenchTaskTests(unittest.TestCase):
             self.assertNotIn("context_plan_import_test.go", product_diff.read_text(encoding="utf-8"))
             self.assertIn("eval_import.go", product_diff.read_text(encoding="utf-8"))
 
+    def test_safe_extract_rejects_escaping_symlinks_and_allows_internal_symlinks(self):
+        import io
+        import tarfile
+        from deepswe_exp.components.execution.docker_env import DockerFailure, safe_extract
+
+        def make_tar(link_name: str, link_target: str) -> bytes:
+            buf = io.BytesIO()
+            with tarfile.open(fileobj=buf, mode="w") as t:
+                f = tarfile.TarInfo("a.txt")
+                data = b"hello\n"
+                f.size = len(data)
+                t.addfile(f, io.BytesIO(data))
+                s = tarfile.TarInfo(link_name)
+                s.type = tarfile.SYMTYPE
+                s.linkname = link_target
+                t.addfile(s)
+            return buf.getvalue()
+
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            with self.assertRaisesRegex(DockerFailure, "Unsafe symlink"):
+                safe_extract(make_tar("bad", "../../etc/passwd"), root / "out1")
+            with self.assertRaisesRegex(DockerFailure, "Unsafe symlink"):
+                safe_extract(make_tar("abs", "/etc/passwd"), root / "out2")
+            try:
+                safe_extract(make_tar("sub/good", "../a.txt"), root / "out3")
+            except OSError:
+                # Windows without Developer Mode may disallow creating symlinks on host,
+                # but validation itself must not raise DockerFailure.
+                pass
+
     def test_swebench_prepare_resets_root_user_before_filtering_go_tests(self):
         from deepswe_exp.components.execution.preparation import _prepare_swebench
 

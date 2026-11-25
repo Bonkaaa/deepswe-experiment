@@ -7,12 +7,16 @@ from ..results.storage import scratch_directory
 
 EXCLUDED={'.git','__pycache__','.pytest_cache'}
 def copy_snapshot(source,dest):
-    source=Path(source); dest=Path(dest); dest.mkdir(parents=True,exist_ok=True)
+    source=Path(source); source_root=source.resolve(); dest=Path(dest); dest.mkdir(parents=True,exist_ok=True)
     for p in source.rglob('*'):
         rel=p.relative_to(source)
         if any(x in EXCLUDED for x in rel.parts): continue
-        if p.is_symlink(): raise ValueError('Symlink snapshot rejected')
-        if p.is_file():
+        if p.is_symlink():
+            linkname=os.readlink(p)
+            if linkname.startswith('/') or Path(linkname).is_absolute() or not (p.parent/linkname).resolve().is_relative_to(source_root):
+                raise ValueError(f'Unsafe symlink in snapshot: {rel.as_posix()} -> {linkname}')
+            target=dest/rel; target.parent.mkdir(parents=True,exist_ok=True); os.symlink(linkname,target)
+        elif p.is_file():
             target=dest/rel; target.parent.mkdir(parents=True,exist_ok=True); shutil.copy2(p,target)
 
 def collect_diff(baseline,final,output_dir,allowed_prefixes):
