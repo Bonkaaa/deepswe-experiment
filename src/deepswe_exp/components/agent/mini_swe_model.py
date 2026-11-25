@@ -26,7 +26,7 @@ def build_mini_swe_model(settings: Any) -> LitellmModel:
     budget = getattr(settings, "budget", {}) or {}
     max_tokens = int(budget.get("max_output_tokens", 4096))
     wall_time = int(budget.get("wall_time_seconds", 1800))
-    req_timeout = max(60, min(600, wall_time))
+    req_timeout = max(60, min(1200, wall_time))
 
     base_cfg = _load_mini_model_config()
     base_kwargs = dict(base_cfg.get("model_kwargs", {}) or {})
