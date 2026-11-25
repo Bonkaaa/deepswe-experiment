@@ -1,9 +1,8 @@
-study_id: "pilot-multilingual-mid-v10"
+study_id: "pilot-multilingual-caddy-6115-v10"
 data_root: "data"
 output_root: "runs"
 tasks:
   - "caddyserver__caddy-6115"
-  - "prometheus__prometheus-15142"
 branches:
   - "100"
   - "50-random"
@@ -27,9 +26,3 @@ task_options:
     test_pattern: "^Test"
     product_paths:
       - modules/caddyhttp/reverseproxy
-  prometheus__prometheus-15142:
-    role: experiment
-    test_package: "./tsdb"
-    test_pattern: "^TestHead"
-    product_paths:
-      - tsdb
