@@ -1,8 +1,9 @@
-study_id: "pilot-multilingual-terraform-35543-v10"
+study_id: "pilot-multilingual-mid-v10"
 data_root: "data"
 output_root: "runs"
 tasks:
-  - "hashicorp__terraform-35543"
+  - "caddyserver__caddy-6115"
+  - "prometheus__prometheus-15142"
 branches:
   - "100"
   - "50-random"
@@ -20,9 +21,15 @@ quota:
   rpd: 500
 quota_project: "Project-A"
 task_options:
-  hashicorp__terraform-35543:
+  caddyserver__caddy-6115:
     role: experiment
-    test_package: "./internal/terraform"
-    test_pattern: "^TestContext2Plan_import"
+    test_package: "./modules/caddyhttp/reverseproxy"
+    test_pattern: "^Test"
     product_paths:
-      - internal/terraform
+      - modules/caddyhttp/reverseproxy
+  prometheus__prometheus-15142:
+    role: experiment
+    test_package: "./tsdb"
+    test_pattern: "^TestHead"
+    product_paths:
+      - tsdb
