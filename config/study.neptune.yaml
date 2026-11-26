@@ -1,8 +1,8 @@
-study_id: "pilot-multilingual-caddy-6115-v10-neptune-qwen38"
+study_id: "pilot-multilingual-terraform-34900-v10-neptune-qwen38"
 data_root: "data"
 output_root: "runs"
 tasks:
-  - "caddyserver__caddy-6115"
+  - "hashicorp__terraform-34900"
 branches:
   - "100"
   - "50-random"
@@ -15,9 +15,9 @@ budget:
   max_tool_output_chars: 12000
   tool_timeout_seconds: 120
 task_options:
-  caddyserver__caddy-6115:
+  hashicorp__terraform-34900:
     role: experiment
-    test_package: "./modules/caddyhttp/reverseproxy"
-    test_pattern: "^Test"
+    test_package: "./internal/terraform"
+    test_pattern: "(^TestContext2Apply|^TestContext2Plan).*[Ss]ensitive"
     product_paths:
-      - modules/caddyhttp/reverseproxy
+      - internal/terraform

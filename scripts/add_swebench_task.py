@@ -51,7 +51,17 @@ def infer_go_test_scope(eval_script: str) -> tuple[str, str, list[str]]:
     if len(go_test_lines) > 1:
         warnings.append(f"Found {len(go_test_lines)} 'go test' lines; using the first one: {go_test_lines[0]}")
 
-    line = go_test_lines[0].split("|", 1)[0].strip().strip("()")
+    raw_line = go_test_lines[0]
+    in_single = in_double = False
+    for idx, ch in enumerate(raw_line):
+        if ch == "'" and not in_double:
+            in_single = not in_single
+        elif ch == '"' and not in_single:
+            in_double = not in_double
+        elif ch == "|" and not in_single and not in_double:
+            raw_line = raw_line[:idx]
+            break
+    line = raw_line.strip().strip("()")
     tokens = shlex.split(line)
     pkg = "."
     pattern = "^Test"
