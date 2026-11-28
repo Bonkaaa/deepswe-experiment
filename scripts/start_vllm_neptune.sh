@@ -150,7 +150,7 @@ SERVER_PID=$!
 echo "${SERVER_PID}" > "${PID_FILE}"
 echo "[start_vllm] Process spawned (PID: ${SERVER_PID}). Waiting for model load & healthcheck (${MODELS_URL})..."
 
-MAX_WAIT=600
+MAX_WAIT=1800
 WAITED=0
 while [[ $WAITED -lt $MAX_WAIT ]]; do
   if curl -s -f "${MODELS_URL}" >/dev/null 2>&1; then
