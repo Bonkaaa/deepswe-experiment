@@ -31,14 +31,14 @@ class Phase1Phase2Tests(unittest.TestCase):
     def test_load_profile_saturn(self):
         settings = load_settings(profile="saturn")
         self.assertEqual(settings.profile_id, "saturn")
-        self.assertEqual(settings.model, "Qwen/Qwen3.8-27B-FP8")
+        self.assertEqual(settings.model, "Qwen/Qwen3.5-35B-A3B-FP8")
         self.assertEqual(settings.model_provider, "vllm")
         self.assertEqual(settings.ollama_base_url, "http://127.0.0.1:11436/v1")
         self.assertEqual(settings.ollama_num_ctx, 262144)
         self.assertEqual(settings.ollama_options.get("num_gpus"), 2)
         self.assertEqual(settings.ollama_options.get("cuda_visible_devices"), "auto")
         self.assertEqual(settings.output_root.name, settings.study_id)
-        self.assertTrue(settings.study_id.startswith("pilot-multilingual-"))
+        self.assertTrue(settings.study_id.startswith("pilot-patcheval-"))
         self.assertTrue(settings.quota_ready)
 
     def test_load_profile_neptune(self):
@@ -62,7 +62,7 @@ class Phase1Phase2Tests(unittest.TestCase):
             stderr_capture = io.StringIO()
             with patch("sys.stderr", stderr_capture):
                 settings = load_settings(profile="saturn")
-            self.assertEqual(settings.model, "Qwen/Qwen3.8-27B-FP8")
+            self.assertEqual(settings.model, "Qwen/Qwen3.5-35B-A3B-FP8")
             self.assertIn("[WARNING]", stderr_capture.getvalue())
             self.assertIn("conflicting-model-tag", stderr_capture.getvalue())
 

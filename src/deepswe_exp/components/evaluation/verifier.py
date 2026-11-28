@@ -3,6 +3,7 @@ import json
 import posixpath
 import shlex
 import re
+import threading
 import uuid
 import xml.etree.ElementTree as ET
 from pathlib import Path, PurePosixPath
@@ -13,6 +14,7 @@ from ..execution.docker_env import (BENCHMARK_CONTAINER_POLICY,benchmark_contain
 from ..tasks.go_tests import parse_go_test_results,run_selected_go_tests
 
 PLUGIN=Path(__file__).parents[1]/'tasks/collection_plugin.py'
+_SWEBENCH_HARNESS_LOCK=threading.Lock()
 
 class PatchApplicationFailure(RuntimeError): pass
 
@@ -201,19 +203,20 @@ def _run_official_harness(*,task,image,patch,client,run_id,output_dir,dataset_re
     log_root=output_dir/'harness'
     log_root.mkdir(parents=True,exist_ok=True)
     log_dir=log_root/run_id/model_name/task.task_id
-    original_write_text=Path.write_text
-    original_log_dir=run_evaluation.RUN_EVALUATION_LOG_DIR
-    def write_text_lf(path,data,encoding=None,errors=None,newline=None):
-        return original_write_text(path,data,encoding=encoding,errors=errors,newline='\n')
-    Path.write_text=write_text_lf
-    run_evaluation.RUN_EVALUATION_LOG_DIR=log_root
-    try:
-        limits=benchmark_container_limits(task.metadata)
-        restricted_client=_restricted_docker_client(client,limits)
-        result=run_instance(test_spec,prediction,restricted_client,run_id,timeout=timeout)
-    finally:
-        Path.write_text=original_write_text
-        run_evaluation.RUN_EVALUATION_LOG_DIR=original_log_dir
+    with _SWEBENCH_HARNESS_LOCK:
+        original_write_text=Path.write_text
+        original_log_dir=run_evaluation.RUN_EVALUATION_LOG_DIR
+        def write_text_lf(path,data,encoding=None,errors=None,newline=None):
+            return original_write_text(path,data,encoding=encoding,errors=errors,newline='\n')
+        Path.write_text=write_text_lf
+        run_evaluation.RUN_EVALUATION_LOG_DIR=log_root
+        try:
+            limits=benchmark_container_limits(task.metadata)
+            restricted_client=_restricted_docker_client(client,limits)
+            result=run_instance(test_spec,prediction,restricted_client,run_id,timeout=timeout)
+        finally:
+            Path.write_text=original_write_text
+            run_evaluation.RUN_EVALUATION_LOG_DIR=original_log_dir
     report_path=log_dir/'report.json'
     if report_path.is_file():
         report=read_json(report_path)
@@ -286,7 +289,77 @@ def parse_result(folder,rc,timed_out=False)->EvaluationResult:
     if reward.get('reward') not in (0,1): return {'status':'infrastructure_error','reward':None,'benchmark':reward}
     return {'status':'pass' if reward['reward']==1 else 'fail_test','reward':reward['reward'],'benchmark':reward}
 
+def _classify_patcheval_error(error_log: str, language: str) -> tuple[str, str]:
+    """Classify PatchEval non-zero fix-run.sh exit using official PatchEval heuristics."""
+    if "patch does not apply" in error_log or "error: patch failed" in error_log:
+        return "apply_failure", "apply_fail"
+    lang = (language or "").strip().lower()
+    if lang == "python":
+        if "SyntaxError" in error_log or "IndentationError" in error_log:
+            return "fail_test", "compilation_fail"
+        return "fail_test", "validation_fail"
+    if lang in ("javascript", "js", "typescript", "ts"):
+        if "SyntaxError" in error_log or "TypeError" in error_log:
+            return "fail_test", "compilation_fail"
+        return "fail_test", "validation_fail"
+    if lang == "go":
+        if re.search(r"^.*\.go:\d+:\d+: ", error_log, re.MULTILINE) and not re.search(r"panic:", error_log):
+            return "fail_test", "compilation_fail"
+        return "fail_test", "validation_fail"
+    return "fail_test", "validation_fail"
+
+
+def run_patcheval_patch(backend, task, image, patch, output, protocol_hash="", timeout=600):
+    output = Path(output)
+    output.mkdir(parents=True, exist_ok=True)
+    patch_bytes = Path(patch).read_bytes().replace(b"\r\n", b"\n")
+    if patch_bytes and not patch_bytes.endswith(b"\n"):
+        patch_bytes += b"\n"
+    rc = -1
+    stdout = ""
+    try:
+        with backend.sandbox(image, task, workdir="/workspace") as box:
+            box.put_bytes("/workspace/fix.patch", patch_bytes)
+            rc, stdout = box.execute("bash -lc 'cd /workspace && bash fix-run.sh'", timeout)
+        (output / "test-stdout.txt").write_text(stdout, encoding="utf-8")
+        if rc == 0:
+            result = {
+                "status": "pass",
+                "reward": 1,
+                "benchmark": {"validation_type": "Repair Success", "language": task.language, "exit_code": rc},
+            }
+        elif rc in (124, 137):
+            result = {
+                "status": "timeout",
+                "reward": None,
+                "benchmark": {"validation_type": "timeout", "language": task.language, "exit_code": rc},
+                "detail": stdout[-2000:],
+            }
+        else:
+            status, val_type = _classify_patcheval_error(stdout, task.language)
+            result = {
+                "status": status,
+                "reward": 0,
+                "benchmark": {"validation_type": val_type, "language": task.language, "exit_code": rc},
+                "detail": stdout[-2000:],
+            }
+    except Exception as exc:
+        (output / "test-stdout.txt").write_text(stdout, encoding="utf-8")
+        result = {
+            "status": "infrastructure_error",
+            "reward": None,
+            "benchmark": {"validation_type": "infrastructure_error", "language": task.language, "exit_code": rc},
+            "detail": f"{type(exc).__name__}: {str(exc)[:1000]}",
+        }
+    result.update(schema_version=1, protocol_hash=protocol_hash)
+    write_json(output / "result.json", result)
+    return result
+
+
 def evaluate_patch(backend,task,image,patch,output,protocol_hash=''):
+    from ..tasks.tasks import is_patcheval_task
+    if is_patcheval_task(task):
+        return run_patcheval_patch(backend,task,image,patch,output,protocol_hash)
     if task.benchmark:
         return run_swebench_patch(backend,task,image,patch,output,protocol_hash)
     output=Path(output); output.mkdir(parents=True,exist_ok=True)
@@ -325,7 +398,12 @@ def evaluate_patch(backend,task,image,patch,output,protocol_hash=''):
 
 def evaluate_supplied_tests(backend,task,image,snapshot,manifest,patch,output,timeout=1800,protocol_hash=''):
     """Run assigned test IDs from the trusted filtered snapshot, never agent-edited tests."""
+    from ..tasks.tasks import is_patcheval_task
     output=Path(output); output.mkdir(parents=True,exist_ok=True)
+    if is_patcheval_task(task):
+        result={'schema_version':1,'protocol_hash':protocol_hash,'status':'not_applicable',
+                'passed':0,'failed':0,'total':len(manifest.get('kept_node_ids',[]))}
+        write_json(output/'result.json',result); return result
     if task.benchmark:
         return _evaluate_go_tests(backend,task,image,snapshot,manifest,patch,output,timeout,protocol_hash)
     node_ids=manifest.get('kept_node_ids',[])

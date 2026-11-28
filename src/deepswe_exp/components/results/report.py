@@ -7,9 +7,9 @@ from pathlib import Path
 from .storage import read_json
 
 FIELDS = [
-    "task_id", "task_category", "experiment_role", "branch", "seed", "attempt_id", "run_id", "group_valid", "run_status",
+    "task_id", "task_category", "language", "has_unit_tests", "experiment_role", "branch", "seed", "attempt_id", "run_id", "group_valid", "run_status",
     "agent_stop_reason", "model_requests", "elapsed_seconds", "input_tokens", "output_tokens",
-    "visible_test_cases", "visible_test_ratio", "evaluation_status", "reward",
+    "visible_test_cases", "visible_test_ratio", "evaluation_status", "patcheval_validation_type", "reward",
     "f2p_passed", "f2p_total", "p2p_passed", "p2p_total", "agent_seen_total", "agent_seen_passed",
     "agent_seen_failed", "technical_detail",
     "seen_tests_status", "seen_tests_passed", "seen_tests_failed", "seen_tests_skipped", "seen_pass_but_eval_fail",
@@ -95,6 +95,8 @@ def _record(settings, run: dict) -> dict:
     detail = evaluation.get("detail") or error.get("detail") or agent.get("error_detail") or ""
     return {
         "task_id": run.get("task_id"), "task_category": prepared.get("category", ""),
+        "language": prepared.get("language", benchmark.get("language", "")),
+        "has_unit_tests": prepared.get("has_unit_tests", ""),
         "experiment_role": prepared.get("role", "experiment"),
         "branch": run.get("branch"), "seed": run.get("seed"),
         "attempt_id": run.get("attempt_id"), "run_id": run.get("run_id"),
@@ -106,6 +108,7 @@ def _record(settings, run: dict) -> dict:
         "visible_test_cases": manifest.get("kept_cases", ""),
         "visible_test_ratio": manifest.get("actual_ratio", ""),
         "evaluation_status": evaluation.get("status", "not_evaluated"),
+        "patcheval_validation_type": benchmark.get("validation_type", ""),
         "reward": evaluation.get("reward", ""),
         "f2p_passed": benchmark.get("f2p_passed", ""), "f2p_total": benchmark.get("f2p_total", ""),
         "p2p_passed": benchmark.get("p2p_passed", ""), "p2p_total": benchmark.get("p2p_total", ""),

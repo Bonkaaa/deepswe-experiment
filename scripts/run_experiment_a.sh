@@ -96,7 +96,7 @@ ARCHIVE_PATH="${RUNS_DIR}/${ARCHIVE_NAME}"
 echo ""
 echo "Packaging study results into ${ARCHIVE_PATH}..."
 mkdir -p "${RUNS_DIR}"
-tar -czf "${ARCHIVE_PATH}" -C "${RUNS_DIR}" "${STUDY_ID}"
+tar --exclude="${STUDY_ID}/*/base" --exclude="${STUDY_ID}/*/final" --exclude="${STUDY_ID}/*/prepared/*/snapshot" -czf "${ARCHIVE_PATH}" -C "${RUNS_DIR}" "${STUDY_ID}"
 
 SERVER_IP=$(hostname -I 2>/dev/null | awk '{print $1}' || true)
 SERVER_IP="${SERVER_IP:-<server_ip>}"

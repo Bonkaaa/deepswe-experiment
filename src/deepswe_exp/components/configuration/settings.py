@@ -87,6 +87,19 @@ class Settings:
         return self.config["budget"]
 
     @property
+    def workers(self) -> int:
+        return max(1, int(self.config.get("workers", 1)))
+
+    @property
+    def continue_on_error(self) -> bool:
+        return bool(self.config.get("continue_on_error", False))
+
+    @property
+    def validation_repeats(self) -> int | None:
+        val = self.config.get("validation_repeats")
+        return int(val) if val is not None else None
+
+    @property
     def seeds(self) -> list[int]:
         return self.config.get("seeds", [self.config.get("sample_seed", 42)])
 
@@ -108,9 +121,34 @@ class Settings:
         return text.replace(self.api_key, "[REDACTED]") if self.api_key else text
 
 
-def _validate_config(config: object) -> dict:
+def _resolve_tasks_from_file(config: dict, root: Path | None) -> dict:
+    tasks_file = config.get("tasks_file")
+    if not tasks_file:
+        return config
+    if not isinstance(tasks_file, str) or not tasks_file.strip():
+        raise ValueError("tasks_file must be a non-empty path")
+    path = Path(tasks_file)
+    if not path.is_absolute():
+        if root is None:
+            raise ValueError("Cannot resolve relative tasks_file without project root")
+        path = (root / path).resolve()
+    if not path.is_file():
+        raise FileNotFoundError(f"tasks_file not found: {path}")
+    text = path.read_text(encoding="utf-8")
+    if path.suffix.lower() == ".json":
+        import json
+        loaded = json.loads(text)
+    else:
+        loaded = [line.strip() for line in text.splitlines() if line.strip() and not line.strip().startswith("#")]
+    if not isinstance(loaded, list) or not loaded:
+        raise ValueError(f"tasks_file must contain a non-empty list of task IDs: {path}")
+    return {**config, "tasks": loaded}
+
+
+def _validate_config(config: object, root: Path | None = None) -> dict:
     if not isinstance(config, dict):
         raise ValueError("Configuration must be a YAML mapping")
+    config = _resolve_tasks_from_file(config, root)
     for key in ("study_id", "data_root", "output_root", "tasks", "branches", "budget"):
         if key not in config:
             raise ValueError(f"Missing configuration: {key}")
@@ -162,6 +200,15 @@ def _validate_config(config: object) -> dict:
     harness = config.get("harness", "mini-swe-agent")
     if not isinstance(harness, str) or harness not in ("mini-swe-agent", "custom"):
         raise ValueError(f"Invalid harness: {harness}; must be 'mini-swe-agent' or 'custom'")
+    workers = config.get("workers", 1)
+    if type(workers) is not int or workers <= 0 or workers > 32:
+        raise ValueError("workers must be an integer between 1 and 32")
+    if "continue_on_error" in config and type(config["continue_on_error"]) is not bool:
+        raise ValueError("continue_on_error must be a boolean")
+    if "validation_repeats" in config and config["validation_repeats"] is not None:
+        vr = config["validation_repeats"]
+        if type(vr) is not int or vr <= 0 or vr > 5:
+            raise ValueError("validation_repeats must be an integer between 1 and 5")
     return config
 
 
@@ -262,10 +309,10 @@ def load_settings(
         else:
             study_path = Path(config_path).expanduser().resolve()
 
-        study_config = _validate_config(yaml.safe_load(study_path.read_text(encoding="utf-8")))
+        study_config = _validate_config(yaml.safe_load(study_path.read_text(encoding="utf-8")), root=root)
         if study_id:
             study_config = {**study_config, "study_id": str(study_id).strip()}
-            _validate_config(study_config)
+            _validate_config(study_config, root=root)
         provider = prof_config["provider"]
         model = prof_config["model"]
         key = os.environ.get("GEMINI_API_KEY", env.get("GEMINI_API_KEY") or "").strip() if provider == "google" else ""
@@ -293,10 +340,10 @@ def load_settings(
         path = root / "config" / "study.yaml"
     else:
         path = Path(config_path).expanduser().resolve()
-    config = _validate_config(yaml.safe_load(path.read_text(encoding="utf-8")))
+    config = _validate_config(yaml.safe_load(path.read_text(encoding="utf-8")), root=root)
     if study_id:
         config = {**config, "study_id": str(study_id).strip()}
-        _validate_config(config)
+        _validate_config(config, root=root)
     model = os.environ.get("MODEL", env.get("MODEL") or "").strip()
     key = os.environ.get("GEMINI_API_KEY", env.get("GEMINI_API_KEY") or "").strip()
     provider = os.environ.get("MODEL_PROVIDER", env.get("MODEL_PROVIDER") or "google").strip()

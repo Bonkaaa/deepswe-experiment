@@ -1,0 +1,18 @@
+study_id: "patcheval-230-saturn-qwen35-35b-a3b"
+data_root: "data"
+output_root: "runs"
+tasks_file: "data/patcheval/all_tasks.json"
+branches:
+  - "100"
+  - "50-random"
+  - "0"
+sample_seed: 42
+workers: 4
+continue_on_error: true
+validation_repeats: 1
+budget:
+  max_model_requests: 150
+  wall_time_seconds: 1800
+  max_output_tokens: 16384
+  max_tool_output_chars: 12000
+  tool_timeout_seconds: 120

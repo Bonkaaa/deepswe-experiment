@@ -13,20 +13,23 @@ BRANCH_RATIOS={'100':1.,'70-random':.7,'50-random':.5,'30-random':.3,'0':0.}
 
 class MissingRelevanceScores(ValueError): pass
 
-def source_hash(root,prefixes=('src/adaptix',)):
+def source_hash(root,prefixes=('src/adaptix',),language=None):
+    from .patcheval_tests import is_test_file, _is_ignored
     root_path=Path(root); root_resolved=root_path.resolve(); rows={}
     for prefix in prefixes:
         path=root_path/prefix
         files=[path] if (path.is_file() or path.is_symlink()) else sorted(path.rglob('*'))
         for p in files:
-            if '__pycache__' in p.parts or p.name.endswith('_test.go'): continue
+            rel=p.relative_to(root_path)
+            if any(part in ('.git', '__pycache__', '.pytest_cache') for part in rel.parts) or p.name.endswith('_test.go'): continue
+            if language and (_is_ignored(rel) or is_test_file(rel, language)): continue
             if p.is_symlink():
                 linkname=os.readlink(p)
                 if linkname.startswith('/') or Path(linkname).is_absolute() or not (p.parent/linkname).resolve().is_relative_to(root_resolved):
-                    raise ValueError(f'Unsafe symlink in source: {p.relative_to(root_path).as_posix()} -> {linkname}')
-                rows[p.relative_to(root_path).as_posix()]='symlink:'+linkname
+                    raise ValueError(f'Unsafe symlink in source: {rel.as_posix()} -> {linkname}')
+                rows[rel.as_posix()]='symlink:'+linkname
             elif p.is_file():
-                rows[p.relative_to(root_path).as_posix()]=hashlib.sha256(p.read_bytes()).hexdigest()
+                rows[rel.as_posix()]=hashlib.sha256(p.read_bytes()).hexdigest()
     if not rows: raise ValueError('No product source found')
     return digest(rows)
 
@@ -58,11 +61,19 @@ def inventory(rows:Iterable[dict],scope_part='morphing')->list[TestGroup]:
     if not groups: raise ValueError('No tests found in scope')
     return sorted(groups.values(),key=lambda g:g['id'])
 
-def choose(groups:Sequence[TestGroup],branch:str,seed:int,scores=None)->Manifest:
+def choose(groups:Sequence[TestGroup],branch:str,seed:int,scores=None,allow_empty:bool=False)->Manifest:
     if branch not in (*BRANCH_RATIOS,'50-related'): raise ValueError(f'Unsupported branch: {branch}')
     ordered=sorted(groups,key=lambda g:g['id']); random.Random(seed).shuffle(ordered)
     total=sum(len(g['node_ids']) for g in groups)
     ratio=BRANCH_RATIOS.get(branch,.5)
+    if total==0:
+        if not allow_empty:
+            raise ValueError('No tests available to select')
+        payload={'schema_version':1,'branch':branch,'seed':seed,'groups':[],'kept_groups':[],
+                 'kept_node_ids':[],'removed_node_ids':[],'total_cases':0,'kept_cases':0,
+                 'actual_ratio':0.0,'target_ratio':ratio}
+        payload['manifest_hash']=digest(payload)
+        return payload
     candidates=[(0,0)]
     for i,g in enumerate(ordered): candidates.append((i+1,candidates[-1][1]+len(g['node_ids'])))
     count,n=min(candidates,key=lambda v:(abs(v[1]-ratio*total),v[1]))

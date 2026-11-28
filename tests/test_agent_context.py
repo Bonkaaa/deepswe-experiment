@@ -279,8 +279,8 @@ class TestAgentContextIntegration(unittest.TestCase):
         settings = load_settings(profile="saturn")
         self.assertEqual(settings.ollama_num_ctx, 262144)
         self.assertEqual(settings.ollama_context_safety_tokens, 16384)
-        # input_budget = 262144 - 24576 (max_output) - 16384 (safety) = 221184
-        self.assertEqual(settings.input_budget, 221184)
+        # input_budget = 262144 - 16384 (max_output) - 16384 (safety) = 229376
+        self.assertEqual(settings.input_budget, 229376)
 
     def test_settings_override_study_id(self):
         from deepswe_exp.components.configuration.settings import load_settings

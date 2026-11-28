@@ -3,7 +3,7 @@ import json
 import shlex
 import shutil
 from pathlib import Path
-from ..tasks.tasks import load_task,benchmark_record_digest
+from ..tasks.tasks import load_task,benchmark_record_digest,is_patcheval_task
 from ..tasks.go_tests import collect_go_tests,filter_go_tests
 from ..tasks.variants import inventory,choose,filter_snapshot,source_hash,snapshot_hash,MissingRelevanceScores
 from ..results.storage import write_json,read_json,digest,scratch_directory
@@ -42,6 +42,8 @@ def export_app(box,dest):
 
 def prepare(settings,task_id,backend):
     task=load_task(settings.task_path(task_id))
+    if is_patcheval_task(task):
+        return _prepare_patcheval(settings,task,backend)
     if task.benchmark:
         return _prepare_swebench(settings,task,backend)
     settings.output_root.mkdir(parents=True,exist_ok=True); root=settings.output_root/task_id
@@ -133,15 +135,21 @@ def audit(box,manifest):
     box.checked('test "$(git rev-list --all --count)" = 1')
 
 def create_agent(backend,task,prepared,snapshot,manifest):
-    box=backend.sandbox(prepared['image'],task)
+    is_pe=is_patcheval_task(task)
+    workdir=prepared.get('workdir',task.workdir) if is_pe else None
+    box=backend.sandbox(prepared['image'],task,workdir=workdir)
     try:
         cwd=shlex.quote(box.cwd)
         box.checked(f'find {cwd} -mindepth 1 -maxdepth 1 -exec rm -rf {{}} +')
-        box.put_tree(snapshot,box.cwd); clean(box)
-        if task.benchmark:
-            audit_go(box,task,manifest)
+        box.put_tree(snapshot,box.cwd)
+        if is_pe:
+            clean_patcheval(box,box.cwd)
         else:
-            audit(box,manifest)
+            clean(box)
+            if task.benchmark:
+                audit_go(box,task,manifest)
+            else:
+                audit(box,manifest)
         return box
     except Exception:
         box.close(); raise
@@ -161,7 +169,8 @@ def verify_prepared_variant(task_root,prepared,branch,seed):
     snapshot=variant/'snapshot'
     if snapshot_hash(snapshot)!=manifest.get('snapshot_hash'):
         raise ValueError(f'Prepared snapshot changed: {key}')
-    if source_hash(snapshot,manifest.get('product_paths',[]))!=prepared.get('source_hash'):
+    language=prepared.get('language') if isinstance(prepared.get('benchmark'),dict) and prepared['benchmark'].get('type')=='patcheval' else None
+    if source_hash(snapshot,manifest.get('product_paths',[]),language=language)!=prepared.get('source_hash'):
         raise ValueError(f'Prepared product source changed: {key}')
     return manifest
 
@@ -256,3 +265,185 @@ def audit_go(box,task,manifest):
         raise RuntimeError(f'Filtered Go test inventory differs from manifest: expected {expected}, found {found}')
     cwd=shlex.quote(box.cwd)
     box.checked(f'test "$(git -C {cwd} rev-list --all --count)" = 1')
+
+
+def _repo_basename(repo_url: str) -> str:
+    name = (repo_url or "").rstrip("/").split("/")[-1]
+    if name.endswith(".git"):
+        name = name[:-4]
+    return name
+
+
+def _detect_patcheval_workdir(box, task) -> str:
+    hint = str(task.metadata.get("workdir") or "").rstrip("/")
+    if hint:
+        rc, _ = box.execute(f"test -d {shlex.quote(hint)}/.git", 60)
+        if rc == 0:
+            return hint
+        raise RuntimeError(f"PatchEval workdir is not a git repo in image: {hint}")
+
+    repo_name = _repo_basename(str(task.metadata.get("repo") or ""))
+    if repo_name:
+        for candidate in (repo_name, repo_name.lower()):
+            path = f"/workspace/{candidate}"
+            rc, _ = box.execute(f"test -d {shlex.quote(path)}/.git", 60)
+            if rc == 0:
+                return path
+
+    rc, _ = box.execute("test -d /workspace/.git", 60)
+    if rc == 0:
+        return "/workspace"
+
+    rc, out = box.execute("find /workspace -mindepth 2 -maxdepth 3 -type d -name .git 2>/dev/null | head -n 2", 60)
+    candidates = [line.rsplit("/.git", 1)[0] for line in out.splitlines() if line.strip()]
+    if len(candidates) == 1:
+        return candidates[0]
+
+    if repo_name:
+        for candidate in (repo_name, repo_name.lower()):
+            path = f"/workspace/{candidate}"
+            rc, _ = box.execute(f"test -d {shlex.quote(path)}", 60)
+            if rc == 0:
+                return path
+    return "/workspace"
+
+
+def _hide_workspace_payload(box, workdir: str) -> None:
+    """Remove PatchEval harness scripts (fix-run.sh, PoC, fix.patch) outside the repo directory."""
+    box.checked("rm -f /workspace/fix.patch /workspace/fix-run.sh /workspace/prepare.sh")
+    norm = workdir.rstrip("/")
+    if norm == "/workspace":
+        # Remove untracked harness/PoC scripts in /workspace when repo root IS /workspace.
+        box.checked("if [ -d /workspace/.git ]; then git config --global --add safe.directory /workspace && git -C /workspace clean -fdx; fi")
+        return
+    if not norm.startswith("/workspace/"):
+        return
+    parts = [p for p in norm[len("/workspace/"):].split("/") if p]
+    parent = "/workspace"
+    for part in parts:
+        box.checked(
+            f"find {shlex.quote(parent)} -mindepth 1 -maxdepth 1 ! -name {shlex.quote(part)} -exec rm -rf -- {{}} +"
+        )
+        parent = f"{parent}/{part}"
+
+
+def clean_patcheval(box, workdir: str) -> None:
+    _hide_workspace_payload(box, workdir)
+    clean(box)
+    rc, _ = box.execute("test ! -e /workspace/fix-run.sh && test ! -e /workspace/fix.patch")
+    if rc:
+        raise RuntimeError("PatchEval isolation audit failed: evaluation payload still present")
+    cwd = shlex.quote(box.cwd)
+    box.checked(f'test "$(git -C {cwd} rev-list --all --count)" = 1')
+
+
+def _prepare_patcheval(settings, task, backend):
+    from ..tasks.patcheval_tests import discover_patcheval_tests, filter_patcheval_snapshot
+
+    settings.output_root.mkdir(parents=True, exist_ok=True)
+    root = settings.output_root / task.task_id
+    options = settings.config.get("task_options", {}).get(task.task_id, {})
+    prefixes = options.get("product_paths", ["."])
+    language = task.language
+    instance_hash = benchmark_record_digest(task)
+    grader_policy = {**BENCHMARK_CONTAINER_POLICY, **benchmark_container_limits(task.metadata)}
+    source_config_hash = digest({
+        "branches": settings.config["branches"],
+        "seeds": settings.seeds,
+        "task_config": options,
+        "benchmark": task.benchmark,
+        "benchmark_instance_hash": instance_hash,
+        "grader_container_policy": grader_policy,
+    })
+    if (root / "prepared.json").exists():
+        old = read_json(root / "prepared.json")
+        if old.get("source_config_hash") != source_config_hash:
+            raise ValueError("Prepared PatchEval configuration changed; use a new study_id")
+        from ..tasks.tasks import verify_benchmark_record
+        verify_benchmark_record(task, old)
+        inventory_record = read_json(root / "inventory.json")
+        if snapshot_hash(root / "base") != inventory_record.get("snapshot_hash"):
+            raise ValueError("Prepared PatchEval base snapshot changed; use a new study_id")
+        for key in old["manifests"]:
+            branch, seed = key.rsplit("/", 1)
+            verify_prepared_variant(root, old, branch, seed)
+        return old
+
+    image = backend.resolve(task.image)
+    with backend.sandbox(image, task, workdir="/workspace") as box:
+        workdir = _detect_patcheval_workdir(box, task)
+        box.cwd = workdir
+        rc, head_out = box.execute(
+            f"git config --global --add safe.directory {shlex.quote(workdir)} && git -C {shlex.quote(workdir)} rev-parse HEAD 2>/dev/null || true",
+            60,
+        )
+        base_commit = head_out.strip().splitlines()[-1].strip() if rc == 0 and head_out.strip() else ""
+        clean_patcheval(box, workdir)
+        base = root / "base"
+        shutil.rmtree(base, ignore_errors=True)
+        export_app(box, base)
+
+    groups = discover_patcheval_tests(base, language)
+    original_hash = source_hash(base, prefixes, language=language)
+    base_hash = snapshot_hash(base)
+    inventory_value = {
+        "schema_version": 1,
+        "language": language,
+        "workdir": workdir,
+        "groups": groups,
+        "all_nodes": [node for g in groups for node in g["node_ids"]],
+        "source_hash": original_hash,
+        "snapshot_hash": base_hash,
+    }
+    inventory_value["inventory_hash"] = digest(inventory_value)
+    write_json(root / "inventory.json", inventory_value)
+
+    manifests = {}
+    for seed in settings.seeds:
+        for branch in settings.config["branches"]:
+            try:
+                manifest = choose(groups, branch, seed, options.get("relevance_scores"), allow_empty=True)
+            except MissingRelevanceScores:
+                if branch == "50-related":
+                    continue
+                raise
+            variant = root / "prepared" / branch / str(seed)
+            shutil.rmtree(variant, ignore_errors=True)
+            variant.mkdir(parents=True, exist_ok=True)
+            shutil.copytree(base, variant / "snapshot", symlinks=True)
+            filter_patcheval_snapshot(variant / "snapshot", manifest, language)
+            if source_hash(variant / "snapshot", prefixes, language=language) != original_hash:
+                raise RuntimeError(f"Product source changed while filtering {language} tests for {task.task_id}")
+            manifest.update(
+                source_hash=original_hash,
+                product_paths=prefixes,
+                language=language,
+                workdir=workdir,
+                snapshot_hash=snapshot_hash(variant / "snapshot"),
+            )
+            manifest.pop("manifest_hash", None)
+            manifest["manifest_hash"] = digest(manifest)
+            write_json(variant / "manifest.json", manifest)
+            manifests[f"{branch}/{seed}"] = manifest["manifest_hash"]
+
+    result = {
+        "schema_version": 1,
+        "task_id": task.task_id,
+        "base_commit": base_commit,
+        "image": image,
+        "verifier_image": image,
+        "workdir": workdir,
+        "language": language,
+        "has_unit_tests": bool(groups),
+        "total_unit_tests": len(groups),
+        "source_hash": original_hash,
+        "manifests": manifests,
+        "category": task.metadata.get("category"),
+        "role": options.get("role", "experiment"),
+        "source_config_hash": source_config_hash,
+        "benchmark_instance_hash": instance_hash,
+        "grader_container_policy": grader_policy,
+        "benchmark": task.benchmark,
+    }
+    write_json(root / "prepared.json", result)
+    return result

@@ -131,6 +131,7 @@ done
 
 echo "[start_vllm:${PROFILE}] Starting vLLM on GPU(s) CUDA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES} (TP=${NUM_GPUS}, ${HOST}:${PORT})..."
 nohup "${VLLM_BIN}" serve "${MODEL}" \
+  --trust-remote-code \
   --host "${HOST}" \
   --port "${PORT}" \
   --tensor-parallel-size "${NUM_GPUS}" \

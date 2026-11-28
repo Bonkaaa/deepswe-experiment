@@ -224,7 +224,8 @@ class Phase3Phase4Tests(unittest.TestCase):
                     from deepswe_exp.components.execution.docker_env import BENCHMARK_CONTAINER_POLICY, benchmark_container_limits
                     from deepswe_exp.components.tasks.tasks import benchmark_record_digest
                     prepared["benchmark_instance_hash"] = benchmark_record_digest(task)
-                    prepared["harness_revision"] = task.benchmark["harness_revision"]
+                    if "harness_revision" in task.benchmark:
+                        prepared["harness_revision"] = task.benchmark["harness_revision"]
                     prepared["grader_container_policy"] = {
                         **BENCHMARK_CONTAINER_POLICY, **benchmark_container_limits(task.metadata),
                     }
@@ -235,7 +236,7 @@ class Phase3Phase4Tests(unittest.TestCase):
                 write_json(task_dir / "validation" / "validation.json", validation)
 
                 with patch("deepswe_exp.components.results.storage.fetch_ollama_metadata", return_value={"version": "0.5.4", "digest": "sha256:qwen35"}):
-                    sched = plan_runs(settings)
+                    sched = plan_runs(settings, task_ids=[task_id])
                     self.assertIn("model_metadata", sched)
                     self.assertEqual(sched["model_metadata"]["digest"], "sha256:qwen35")
                     self.assertTrue((out / "protocol_snapshot.json").is_file())
@@ -257,18 +258,19 @@ class Phase3Phase4Tests(unittest.TestCase):
                     "image": "img",
                     "manifests": {"100/42": {}, "50-random/42": {}, "0/42": {}},
                     "benchmark_instance_hash": benchmark_record_digest(task),
-                    "harness_revision": task.benchmark["harness_revision"],
                     "grader_container_policy": {
                         **BENCHMARK_CONTAINER_POLICY, **benchmark_container_limits(task.metadata),
                     },
                 }
+                if "harness_revision" in task.benchmark:
+                    prepared["harness_revision"] = task.benchmark["harness_revision"]
                 write_json(task_dir / "prepared.json", prepared)
                 write_json(task_dir / "validation" / "validation.json", {
                     "valid": True, "prepared_hash": "stale-prepared-inputs",
                 })
 
                 with self.assertRaisesRegex(ValueError, "does not match prepared inputs"):
-                    plan_runs(settings)
+                    plan_runs(settings, task_ids=[task_id])
 
     def test_schedule_digest_change_detection(self):
         with scratch_directory() as out:
@@ -311,7 +313,7 @@ class Phase3Phase4Tests(unittest.TestCase):
 
         with patch("deepswe_exp.components.execution.runner.run_next", side_effect=fake_run_next), \
              patch("deepswe_exp.components.execution.runner.schedule", return_value=mock_schedule):
-            res = run_all(self.saturn_settings, backend=None)
+            res = run_all(self.saturn_settings, backend=None, workers=1, continue_on_error=False)
             self.assertEqual(res["status"], "completed")
             self.assertEqual(res["completed"], 2)
 
@@ -320,7 +322,7 @@ class Phase3Phase4Tests(unittest.TestCase):
              patch("deepswe_exp.components.execution.runner.schedule", return_value={
                  "runs": [{"status": "interrupted", "group_valid": False, "task_id": "adaptix", "seed": 42, "branch": "100", "attempt_id": "att1"}]
              }):
-            res = run_all(self.saturn_settings, backend=None)
+            res = run_all(self.saturn_settings, backend=None, workers=1, continue_on_error=False)
             self.assertEqual(res["status"], "incomplete")
             self.assertEqual(res["incomplete_groups"], ["adaptix:seed_42"])
 
@@ -335,7 +337,7 @@ class Phase3Phase4Tests(unittest.TestCase):
             return runs.pop(0)
 
         with patch("deepswe_exp.components.execution.runner.run_next", side_effect=fake_run_next):
-            res = run_all(self.saturn_settings, backend=None)
+            res = run_all(self.saturn_settings, backend=None, workers=1, continue_on_error=False)
             self.assertEqual(res["status"], "interrupted")
             self.assertEqual(res["completed"], 1)
             self.assertEqual(res["failed_run_id"], "r2")

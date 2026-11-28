@@ -1,7 +1,7 @@
 profile_id: saturn
 provider: vllm
 study_config: config/study.saturn.yaml
-model: Qwen/Qwen3.8-27B-FP8
+model: Qwen/Qwen3.5-35B-A3B-FP8
 vllm:
   base_url: http://127.0.0.1:11436/v1
   venv_dir: .local/vllm-saturn/venv

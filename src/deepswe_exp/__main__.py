@@ -29,6 +29,10 @@ def _parser() -> argparse.ArgumentParser:
             sub.add_argument("--run-id", help="Select an already planned run")
         if name == "run-next":
             sub.add_argument("--restart-group", action="store_true", help="Create a fresh attempt for an interrupted task/seed group")
+        if name in ("prepare", "validate", "run-all"):
+            sub.add_argument("--workers", type=int, default=None, help="Override concurrent worker count")
+        if name == "run-all":
+            sub.add_argument("--continue-on-error", action="store_true", default=None, help="Keep running remaining tasks when one fails")
     return parser
 
 
@@ -91,8 +95,10 @@ def _doctor(settings) -> int:
     for task_id in settings.task_ids:
         try:
             task = load_task(settings.task_path(task_id))
-            valid = len(task.base_commit) == 40 and bool(task.image)
-            detail = f"{task.task_id}; commit and image found" if valid else "invalid commit or image"
+            valid = bool(task.image) if task.is_patcheval else (len(task.base_commit) == 40 and bool(task.image))
+            detail = f"{task.task_id}; image found ({task.language})" if (valid and task.is_patcheval) else (
+                f"{task.task_id}; commit and image found" if valid else "invalid commit or image"
+            )
         except Exception as exc:
             valid, detail = False, f"{type(exc).__name__}: {exc}"
         checks.append(_print_check(f"Task {task_id}", valid, detail))
@@ -135,26 +141,53 @@ def main(argv: list[str] | None = None) -> int:
         with study_lock(settings.output_root):
             selected = _select_tasks(settings, getattr(args, "task", None))
             if args.command == "prepare":
+                from concurrent.futures import ThreadPoolExecutor, as_completed
                 from .components.execution.preparation import prepare
                 from .components.execution.docker_env import DockerBackend
+                raw_workers = getattr(args, "workers", None)
+                workers = settings.workers if raw_workers is None else raw_workers
+                if workers <= 0 or workers > 32:
+                    raise ValueError("--workers must be between 1 and 32")
                 backend = DockerBackend()
                 try:
-                    for task_id in selected:
-                        result = prepare(settings, task_id, backend)
-                        print(f"Prepared {task_id}: {len(result['manifests'])} snapshots; {settings.output_root / task_id}")
+                    if workers == 1 or len(selected) <= 1:
+                        for task_id in selected:
+                            result = prepare(settings, task_id, backend)
+                            print(f"Prepared {task_id}: {len(result['manifests'])} snapshots; {settings.output_root / task_id}", flush=True)
+                    else:
+                        with ThreadPoolExecutor(max_workers=workers) as pool:
+                            futs = {pool.submit(prepare, settings, tid, backend): tid for tid in selected}
+                            for fut in as_completed(futs):
+                                task_id = futs[fut]
+                                result = fut.result()
+                                print(f"Prepared {task_id}: {len(result['manifests'])} snapshots; {settings.output_root / task_id}", flush=True)
                 finally:
                     backend.client.close()
                 return 0
             if args.command == "validate":
+                from concurrent.futures import ThreadPoolExecutor, as_completed
                 from .components.execution.validation import validate_task
                 from .components.execution.docker_env import DockerBackend
+                raw_workers = getattr(args, "workers", None)
+                workers = settings.workers if raw_workers is None else raw_workers
+                if workers <= 0 or workers > 32:
+                    raise ValueError("--workers must be between 1 and 32")
                 backend = DockerBackend()
                 try:
-                    results = [validate_task(settings, task_id, backend) for task_id in selected]
+                    if workers == 1 or len(selected) <= 1:
+                        results = [validate_task(settings, task_id, backend) for task_id in selected]
+                    else:
+                        by_id = {}
+                        with ThreadPoolExecutor(max_workers=workers) as pool:
+                            futs = {pool.submit(validate_task, settings, tid, backend): tid for tid in selected}
+                            for fut in as_completed(futs):
+                                tid = futs[fut]
+                                by_id[tid] = fut.result()
+                        results = [by_id[tid] for tid in selected]
                 finally:
                     backend.client.close()
                 for task_id, result in zip(selected, results):
-                    print(f"Validation {task_id}: {'valid' if result['valid'] else 'FAILED'}")
+                    print(f"Validation {task_id}: {'valid' if result['valid'] else 'FAILED'}", flush=True)
                 return 0 if all(item["valid"] for item in results) else 2
             if args.command == "plan-runs":
                 from .components.execution.runner import plan_runs
@@ -179,7 +212,13 @@ def main(argv: list[str] | None = None) -> int:
                 from .components.execution.docker_env import DockerBackend
                 backend = DockerBackend()
                 try:
-                    result = run_all(settings, backend, selected[0] if getattr(args, "task", None) else None)
+                    result = run_all(
+                        settings,
+                        backend,
+                        selected[0] if getattr(args, "task", None) else None,
+                        workers=getattr(args, "workers", None),
+                        continue_on_error=getattr(args, "continue_on_error", None),
+                    )
                 finally:
                     backend.client.close()
                 print(f"Batch execution result: {result.get('status')} (completed: {result.get('completed', 0)})")

@@ -1,7 +1,7 @@
 from __future__ import annotations
 import hashlib
 from pathlib import Path
-from ..tasks.tasks import load_task,verify_benchmark_record
+from ..tasks.tasks import load_task,verify_benchmark_record,is_patcheval_task
 from ..results.storage import read_json,write_json,digest
 from ..evaluation.verifier import evaluate_patch
 
@@ -28,6 +28,9 @@ def validate_task(settings,task_id,backend):
     task=load_task(settings.task_path(task_id)); root=settings.output_root/task_id
     prepared=read_json(root/'prepared.json'); records={}
     target=root/'validation'
+    if is_patcheval_task(task):
+        verify_benchmark_record(task,prepared)
+        return _validate_patcheval_task(settings,task,prepared,backend,target)
     if task.benchmark:
         verify_benchmark_record(task,prepared)
         return _validate_swebench_task(settings,task,prepared,backend,target)
@@ -89,6 +92,57 @@ def _validate_swebench_task(settings,task,prepared,backend,target):
     stable=True
     for results in records.values():
         metrics=[(result['status'],result.get('benchmark')) for result in results]
+        stable &= all(metric==metrics[0] for metric in metrics)
+    validation_hash=digest({'prepared_hash':prepared_hash,'patch_hashes':patch_hashes,
+                             'records':records,'stable':stable})
+    value={'schema_version':1,'protocol_hash':validation_hash,'valid':bool(expected and stable),
+           'records':records,'stable':stable,'prepared_hash':prepared_hash,
+           'patch_hashes':patch_hashes,'prepared':prepared}
+    write_json(target/'validation.json',value)
+    return value
+
+
+def _validate_patcheval_task(settings,task,prepared,backend,target):
+    target.mkdir(parents=True,exist_ok=True)
+    prepared_hash=digest(prepared)
+    repeats=settings.validation_repeats or 1
+    patch_hashes={}
+    records={'base':[]}
+    for repeat in range(repeats):
+        folder=target/'base'/str(repeat)
+        folder.mkdir(parents=True,exist_ok=True)
+        patch=folder/'input.patch'
+        patch_bytes=b''
+        patch.write_bytes(patch_bytes)
+        patch_hash=hashlib.sha256(patch_bytes).hexdigest()
+        patch_hashes['base']=patch_hash
+        evaluation_hash=digest({'prepared_hash':prepared_hash,'patch_sha256':patch_hash})
+        result=_evaluate_swebench_with_retries(
+            backend,task,prepared['verifier_image'],patch,folder,evaluation_hash,
+        )
+        records['base'].append(result)
+
+    expected=all(result['status']=='fail_test' and result['reward']==0 for result in records['base'])
+    if task.metadata.get('reference_patch'):
+        records['reference']=[]
+        for repeat in range(repeats):
+            folder=target/'reference'/str(repeat)
+            folder.mkdir(parents=True,exist_ok=True)
+            patch=folder/'input.patch'
+            patch_bytes=task.metadata['reference_patch'].replace('\r\n','\n').encode('utf-8')
+            patch.write_bytes(patch_bytes)
+            patch_hash=hashlib.sha256(patch_bytes).hexdigest()
+            patch_hashes['reference']=patch_hash
+            evaluation_hash=digest({'prepared_hash':prepared_hash,'patch_sha256':patch_hash})
+            result=_evaluate_swebench_with_retries(
+                backend,task,prepared['verifier_image'],patch,folder,evaluation_hash,
+            )
+            records['reference'].append(result)
+        expected &= all(result['status']=='pass' and result['reward']==1 for result in records['reference'])
+
+    stable=True
+    for results in records.values():
+        metrics=[(result['status'],result.get('reward')) for result in results]
         stable &= all(metric==metrics[0] for metric in metrics)
     validation_hash=digest({'prepared_hash':prepared_hash,'patch_hashes':patch_hashes,
                              'records':records,'stable':stable})

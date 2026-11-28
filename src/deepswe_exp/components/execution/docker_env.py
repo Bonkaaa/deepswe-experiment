@@ -59,10 +59,10 @@ def safe_extract(data,destination):
         archive.extractall(destination,filter='data')
 
 class Sandbox:
-    def __init__(self,client,image,task=None):
+    def __init__(self,client,image,task=None,workdir=None):
         metadata=getattr(task,'metadata',task) or {}
         limits=metadata.get('environment',{})
-        self.cwd=getattr(task,'workdir','/app')
+        self.cwd=workdir or getattr(task,'workdir','/app')
         self.container=client.containers.run(image,['sleep','infinity'],detach=True,
             network_disabled=True,working_dir=self.cwd,user='root',
             environment={'PAGER':'cat','MANPAGER':'cat','LESS':'-R','PIP_PROGRESS_BAR':'off','TQDM_DISABLE':'1'},
@@ -131,7 +131,7 @@ class DockerBackend:
         except docker.errors.ImageNotFound: obj=self.client.images.pull(image)
         digests=obj.attrs.get('RepoDigests',[])
         return digests[0] if digests else obj.id
-    def sandbox(self,image,task): return Sandbox(self.client,image,task)
+    def sandbox(self,image,task,workdir=None): return Sandbox(self.client,image,task,workdir=workdir)
     def verifier_image(self,task,image):
         if task.benchmark:
             return image

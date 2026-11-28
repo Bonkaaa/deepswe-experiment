@@ -19,7 +19,8 @@ def copy_snapshot(source,dest):
         elif p.is_file():
             target=dest/rel; target.parent.mkdir(parents=True,exist_ok=True); shutil.copy2(p,target)
 
-def collect_diff(baseline,final,output_dir,allowed_prefixes):
+def collect_diff(baseline,final,output_dir,allowed_prefixes,language=None):
+    from ..tasks.patcheval_tests import test_exclude_pathspecs
     output_dir=Path(output_dir).resolve(); output_dir.mkdir(parents=True,exist_ok=True)
     baseline=Path(baseline).resolve(); final=Path(final).resolve()
     # Put temporary Git objects under the selected run artifact, avoiding writes
@@ -44,10 +45,14 @@ def collect_diff(baseline,final,output_dir,allowed_prefixes):
         for p in list(repo.iterdir()):
             if p.is_dir(): shutil.rmtree(p)
             else: p.unlink()
-        copy_snapshot(final,repo); git('add','-f','-A')
+        copy_snapshot(final,repo)
+        git('rm','-rfq','--cached','--ignore-unmatch','.')
+        git('add','-f','-A')
         full=git('diff','--cached','--binary','--no-renames','HEAD')
         pathspecs=[*allowed_prefixes]
-        if pathspecs and not any(str(p).endswith('_test.go') for p in pathspecs):
+        if language:
+            pathspecs.extend(test_exclude_pathspecs(language))
+        elif pathspecs and not any(str(p).endswith('_test.go') for p in pathspecs):
             pathspecs.append(':!*_test.go')
         product=git('diff','--cached','--binary','--no-renames','HEAD','--',*pathspecs)
     a=output_dir/'full_worktree.diff'; b=output_dir/'agent_patch.diff'
