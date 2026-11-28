@@ -240,7 +240,7 @@ def _execute_run(settings, backend, run, value, schedule_path, ledger, lock=None
                     cwd=workdir,
                 ))
             write_json(out / "agent_result.json", agent_result)
-            export_app(box, out / "final")
+            export_app(box, out / "final", skip_unsafe_symlinks=is_patcheval_task(task))
         collect_diff(
             variant / "snapshot",
             out / "final",

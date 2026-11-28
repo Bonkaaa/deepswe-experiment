@@ -528,3 +528,28 @@ def test_parallel_run_all_fail_fast_and_execute_run_pre_try_error(tmp_path: Path
     assert ff_res["failed_run_id"] == "r1"
 
 
+def test_safe_extract_skips_unsafe_fixture_symlinks_when_enabled(tmp_path: Path):
+    import io, tarfile
+    from deepswe_exp.components.execution.docker_env import DockerFailure, safe_extract
+
+    buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w") as tf:
+        info = tarfile.TarInfo("app.go")
+        data = b"package main\n"
+        info.size = len(data)
+        tf.addfile(info, io.BytesIO(data))
+        sym = tarfile.TarInfo("testdata/invalid-symlink")
+        sym.type = tarfile.SYMTYPE
+        sym.linkname = "/non/existing/file"
+        tf.addfile(sym)
+    raw = buf.getvalue()
+
+    with pytest.raises(DockerFailure, match="Unsafe symlink"):
+        safe_extract(raw, tmp_path / "strict")
+
+    safe_extract(raw, tmp_path / "relaxed", skip_unsafe_symlinks=True)
+    assert (tmp_path / "relaxed" / "app.go").is_file()
+    assert not (tmp_path / "relaxed" / "testdata" / "invalid-symlink").exists()
+
+
+

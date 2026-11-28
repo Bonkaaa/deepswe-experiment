@@ -29,7 +29,7 @@ def clean(box):
     rc,out=box.execute('test ! -e /tests && test ! -e /solution && test -z "$(git remote)"')
     if rc: raise RuntimeError('Isolation audit failed')
 
-def export_app(box,dest):
+def export_app(box,dest,skip_unsafe_symlinks=False):
     # Archive excludes Git and generated caches, not untracked source files.
     cwd=shlex.quote(box.cwd)
     box.checked(f"tar --exclude='./.git' --exclude='*/__pycache__' --exclude='*/.pytest_cache' -cf /tmp/app-snapshot.tar -C {cwd} .")
@@ -37,7 +37,7 @@ def export_app(box,dest):
     with scratch_directory(Path(dest).parent) as tmp:
         from .docker_env import safe_extract
         box.get_tree('/tmp/app-snapshot.tar',tmp)
-        safe_extract((tmp/'app-snapshot.tar').read_bytes(),dest)
+        safe_extract((tmp/'app-snapshot.tar').read_bytes(),dest,skip_unsafe_symlinks=skip_unsafe_symlinks)
     box.checked('rm -f /tmp/app-snapshot.tar')
 
 def prepare(settings,task_id,backend):
@@ -381,7 +381,7 @@ def _prepare_patcheval(settings, task, backend):
         clean_patcheval(box, workdir)
         base = root / "base"
         shutil.rmtree(base, ignore_errors=True)
-        export_app(box, base)
+        export_app(box, base, skip_unsafe_symlinks=True)
 
     groups = discover_patcheval_tests(base, language)
     original_hash = source_hash(base, prefixes, language=language)

@@ -43,20 +43,29 @@ def _check_safe_symlink(link_path: Path, linkname: str, root: Path, label: str) 
     if not (link_path.parent / linkname).resolve().is_relative_to(root):
         raise DockerFailure(f'Unsafe symlink ({label}): {linkname}')
 
-def safe_extract(data,destination):
+def safe_extract(data,destination,skip_unsafe_symlinks=False):
     destination=Path(destination); destination.mkdir(parents=True,exist_ok=True)
     dest_root=destination.resolve()
     with tarfile.open(fileobj=io.BytesIO(data)) as archive:
+        safe_members=[]
         for m in archive.getmembers():
             target=(destination/m.name).resolve()
             if not target.is_relative_to(dest_root) or m.isdev():
                 raise DockerFailure(f'Unsafe archive member: {m.name}')
             if m.issym():
-                _check_safe_symlink(target,m.linkname,dest_root,m.name)
+                try:
+                    _check_safe_symlink(target,m.linkname,dest_root,m.name)
+                except DockerFailure:
+                    if skip_unsafe_symlinks:
+                        continue
+                    raise
             elif m.islnk():
                 if not (destination/m.linkname).resolve().is_relative_to(dest_root):
+                    if skip_unsafe_symlinks:
+                        continue
                     raise DockerFailure(f'Unsafe archive hardlink: {m.name} -> {m.linkname}')
-        archive.extractall(destination,filter='data')
+            safe_members.append(m)
+        archive.extractall(destination,members=safe_members,filter='data')
 
 class Sandbox:
     def __init__(self,client,image,task=None,workdir=None):
