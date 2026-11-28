@@ -552,4 +552,52 @@ def test_safe_extract_skips_unsafe_fixture_symlinks_when_enabled(tmp_path: Path)
     assert not (tmp_path / "relaxed" / "testdata" / "invalid-symlink").exists()
 
 
+def test_batch_runner_chunking_cleanup_and_merge_summaries(tmp_path: Path):
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "run_patcheval_batches",
+        Path(__file__).resolve().parents[1] / "scripts" / "run_patcheval_batches.py",
+    )
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+
+    # 230 CVEs -> 10 batches of 23
+    chunks = mod.chunk_tasks([f"CVE-{i}" for i in range(230)], 23)
+    assert len(chunks) == 10
+    assert all(len(c) == 23 for c in chunks)
+
+    # Cleanup removes base/, final/, prepared/*/*/snapshot but preserves trajectories/diffs/summary
+    batch_root = tmp_path / "batch_01"
+    (batch_root / "CVE-1" / "base").mkdir(parents=True)
+    (batch_root / "CVE-1" / "base" / "big.bin").write_bytes(b"123")
+    (batch_root / "CVE-1" / "prepared" / "100" / "42" / "snapshot").mkdir(parents=True)
+    (batch_root / "CVE-1" / "100" / "42" / "attempt-001" / "final").mkdir(parents=True)
+    (batch_root / "CVE-1" / "100" / "42" / "attempt-001" / "trajectory.json").write_text("{}", encoding="utf-8")
+    (batch_root / "CVE-1" / "100" / "42" / "attempt-001" / "agent_patch.diff").write_text("diff", encoding="utf-8")
+    (batch_root / "summary").mkdir(parents=True)
+    (batch_root / "summary" / "runs.csv").write_text(
+        "task_id,language,branch,seed,attempt_id,group_valid,run_status,evaluation_status,reward\n"
+        "CVE-1,Go,100,42,attempt-001,True,scored,pass,1\n"
+        "CVE-1,Go,50-random,42,attempt-001,True,scored,fail_test,0\n"
+        "CVE-1,Go,0,42,attempt-001,True,scored,fail_test,0\n",
+        encoding="utf-8-sig",
+    )
+
+    mod.cleanup_batch_artifacts(batch_root, [], remove_images=False)
+    assert not (batch_root / "CVE-1" / "base").exists()
+    assert not (batch_root / "CVE-1" / "prepared" / "100" / "42" / "snapshot").exists()
+    assert not (batch_root / "CVE-1" / "100" / "42" / "attempt-001" / "final").exists()
+    assert (batch_root / "CVE-1" / "100" / "42" / "attempt-001" / "trajectory.json").is_file()
+    assert (batch_root / "CVE-1" / "100" / "42" / "attempt-001" / "agent_patch.diff").is_file()
+
+    all_csv, all_md = mod.merge_batch_summaries(tmp_path, ["100", "50-random", "0"])
+    assert all_csv.is_file()
+    md_text = all_md.read_text(encoding="utf-8")
+    assert "Tổng số lượt chạy (runs): **3**" in md_text
+    assert "| Go | 3 | 1 | 33.33% |" in md_text
+    assert "`100=1 → 0=0`: 1 cặp" in md_text
+
+
+
 
